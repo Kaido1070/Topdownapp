@@ -1,8 +1,15 @@
 import Foundation
 import Security
+import AVFoundation
 
 enum Site {
-    static let home = URL(string: "https://topdownn.pages.dev/")!
+    static let home: URL = {
+        #if DEBUG
+        // اختبار المحاكي في CI يشغّل نسخة محلية من خادم الموقع
+        if let s = UserDefaults.standard.string(forKey: "smokeBaseURL"), let u = URL(string: s) { return u }
+        #endif
+        return URL(string: "https://topdownn.pages.dev/")!
+    }()
     static let imageRev = "4"
     static let mangaPageRev = "5"
 
@@ -58,8 +65,10 @@ enum APIError: LocalizedError {
     }
 }
 
-/// عميل واجهة الموقع. الكوكيز (td_session) تُحفظ تلقائيًا في HTTPCookieStorage
-/// وكلمة المرور في Keychain، فتسجيل الدخول مرة واحدة فقط.
+/// عميل واجهة الموقع.
+/// كوكي الجلسة td_session من نوع SameSite=Strict، وiOS لا يرسل هذا النوع تلقائيًا
+/// مع طلبات URLSession العادية، فكانت كل الطلبات بعد الدخول ترجع 401.
+/// لذلك نحفظ رمز الجلسة بأنفسنا في Keychain ونرفقه صراحةً في ترويسة Cookie لكل طلب.
 final class API: @unchecked Sendable {
     static let shared = API()
 
@@ -70,26 +79,49 @@ final class API: @unchecked Sendable {
 
     private init() {
         let config = URLSessionConfiguration.default
-        config.httpCookieStorage = .shared
-        config.httpCookieAcceptPolicy = .always
-        config.httpShouldSetCookies = true
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
         config.urlCache = URLCache(memoryCapacity: 64 << 20, diskCapacity: 512 << 20)
-        config.timeoutIntervalForRequest = 30
+        // فهرس القصص في الخادم قد يستغرق وقتًا عند أول طلب، والموقع ينتظره بلا حد
+        config.timeoutIntervalForRequest = 100
+        config.timeoutIntervalForResource = 300
         config.httpAdditionalHeaders = ["User-Agent": API.userAgent, "Accept": "application/json, */*"]
         session = URLSession(configuration: config)
     }
 
     static let userAgent = "TopdownApp/1.0 (iPhone; iOS) Mozilla/5.0 AppleWebKit/605.1.15 Mobile/15E148"
 
-    var hasSessionCookie: Bool {
-        (HTTPCookieStorage.shared.cookies(for: Site.home) ?? []).contains { $0.name == "td_session" && ($0.expiresDate ?? .distantFuture) > .now }
-    }
+    var hasSessionCookie: Bool { Keychain.sessionToken != nil }
 
+    /// ترويسة الكوكي لروابط الموقع فقط (لا نرسل الجلسة لمواقع أخرى).
     func cookieHeader(for url: URL) -> [String: String] {
-        HTTPCookie.requestHeaderFields(with: HTTPCookieStorage.shared.cookies(for: url) ?? [])
+        guard url.host() == Site.home.host(), let token = Keychain.sessionToken else { return [:] }
+        return ["Cookie": "td_session=" + token]
     }
 
-    var sessionCookies: [HTTPCookie] { HTTPCookieStorage.shared.cookies(for: Site.home) ?? [] }
+    /// طلب جاهز يحمل الجلسة.
+    func authorized(_ url: URL) -> URLRequest {
+        var r = URLRequest(url: url)
+        for (k, v) in cookieHeader(for: url) { r.setValue(v, forHTTPHeaderField: k) }
+        r.setValue(API.userAgent, forHTTPHeaderField: "User-Agent")
+        r.mainDocumentURL = Site.home
+        return r
+    }
+
+    var sessionCookies: [HTTPCookie] {
+        guard let token = Keychain.sessionToken, let host = Site.home.host(),
+              let c = HTTPCookie(properties: [.name: "td_session", .value: token, .domain: host, .path: "/", .secure: "TRUE"])
+        else { return [] }
+        return [c]
+    }
+
+    /// خيارات AVURLAsset لتشغيل روابط /api/stream المحمية.
+    func assetOptions(for url: URL) -> [String: Any] {
+        var o: [String: Any] = [AVURLAssetHTTPCookiesKey: sessionCookies]
+        let h = cookieHeader(for: url)
+        if !h.isEmpty { o["AVURLAssetHTTPHeaderFieldsKey"] = h }
+        return o
+    }
 
     // MARK: - المصادقة
 
@@ -114,34 +146,60 @@ final class API: @unchecked Sendable {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(Body(password: password))
-        let (data, resp) = try await session.data(for: req)
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let data: Data, resp: URLResponse
+        do { (data, resp) = try await session.data(for: req) }
+        catch { throw APIError.offline }
+        let http = resp as? HTTPURLResponse
+        let code = http?.statusCode ?? 0
         guard code == 200 else {
             throw code == 401 ? APIError.server("كلمة المرور غير صحيحة") : APIError.server(message(data) ?? "تعذّر تسجيل الدخول (\(code))")
         }
+        guard let token = Self.sessionToken(from: http) else {
+            throw APIError.server("الخادم لم يُرجع جلسة دخول")
+        }
+        Keychain.sessionToken = token
         Keychain.password = password
     }
 
     func logout() async {
         _ = try? await send("POST", "/api/logout", retry: false)
         Keychain.password = nil
-        for c in sessionCookies { HTTPCookieStorage.shared.deleteCookie(c) }
+        Keychain.sessionToken = nil
+    }
+
+    /// يستخرج قيمة td_session من ترويسة Set-Cookie كما هي (مُرمّزة) لإعادتها للخادم.
+    static func sessionToken(from response: HTTPURLResponse?) -> String? {
+        guard let response else { return nil }
+        var headers: [String] = []
+        for (k, v) in response.allHeaderFields {
+            if let key = k as? String, key.lowercased() == "set-cookie", let value = v as? String { headers.append(value) }
+        }
+        for h in headers {
+            if let r = h.range(of: "td_session=") {
+                let value = h[r.upperBound...].prefix { $0 != ";" }
+                if !value.isEmpty { return String(value) }
+            }
+        }
+        if let url = response.url {
+            let fields = response.allHeaderFields.reduce(into: [String: String]()) { d, kv in
+                if let k = kv.key as? String, let v = kv.value as? String { d[k] = v }
+            }
+            return HTTPCookie.cookies(withResponseHeaderFields: fields, for: url).first { $0.name == "td_session" }?.value
+        }
+        return nil
     }
 
     /// إعادة دخول صامتة بكلمة المرور المحفوظة عند انتهاء الجلسة.
     private func silentRelogin() async -> Bool {
         guard let password = Keychain.password else { return false }
-        reloginLock.lock()
-        let task: Task<Bool, Never>
-        if let existing = reloginTask {
-            task = existing
-        } else {
-            task = Task { (try? await self.login(password: password)) != nil }
-            reloginTask = task
+        let task: Task<Bool, Never> = reloginLock.withLock {
+            if let existing = reloginTask { return existing }
+            let t = Task { (try? await self.login(password: password)) != nil }
+            reloginTask = t
+            return t
         }
-        reloginLock.unlock()
         let ok = await task.value
-        reloginLock.lock(); reloginTask = nil; reloginLock.unlock()
+        reloginLock.withLock { reloginTask = nil }
         return ok
     }
 
@@ -165,7 +223,7 @@ final class API: @unchecked Sendable {
     }
 
     private func perform(method: String, url: URL, body: Data?, retry: Bool) async throws -> Data {
-        var req = URLRequest(url: url)
+        var req = authorized(url)
         req.httpMethod = method
         req.cachePolicy = .reloadIgnoringLocalCacheData
         if let body {
@@ -174,8 +232,12 @@ final class API: @unchecked Sendable {
         }
         let data: Data, resp: URLResponse
         do { (data, resp) = try await session.data(for: req) }
-        catch let e as URLError where e.code != .cancelled {
+        catch let e as URLError where [.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed,
+                                         .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+                                         .internationalRoamingOff].contains(e.code) {
             throw APIError.offline
+        } catch let e as URLError where e.code == .timedOut {
+            throw APIError.server("الخادم تأخر في الرد، حاول مرة ثانية")
         }
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if code == 401 {
@@ -275,26 +337,35 @@ final class API: @unchecked Sendable {
 
 enum Keychain {
     private static let service = "com.topdown.app"
-    private static let account = "site-password"
 
     static var password: String? {
-        get {
-            let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account, kSecReturnData as String: true,
-                                    kSecMatchLimit as String: kSecMatchLimitOne]
-            var out: CFTypeRef?
-            guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-            return String(data: d, encoding: .utf8)
-        }
-        set {
-            let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                       kSecAttrAccount as String: account]
-            SecItemDelete(base as CFDictionary)
-            guard let newValue, let data = newValue.data(using: .utf8) else { return }
-            var add = base
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            SecItemAdd(add as CFDictionary, nil)
-        }
+        get { read("site-password") }
+        set { write("site-password", newValue) }
+    }
+
+    /// قيمة كوكي td_session (صالحة 30 يومًا، وتتجدد تلقائيًا بكلمة المرور).
+    static var sessionToken: String? {
+        get { read("session-token") }
+        set { write("session-token", newValue) }
+    }
+
+    private static func read(_ account: String) -> String? {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                kSecAttrAccount as String: account, kSecReturnData as String: true,
+                                kSecMatchLimit as String: kSecMatchLimitOne]
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+
+    private static func write(_ account: String, _ value: String?) {
+        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                   kSecAttrAccount as String: account]
+        SecItemDelete(base as CFDictionary)
+        guard let value, let data = value.data(using: .utf8) else { return }
+        var add = base
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(add as CFDictionary, nil)
     }
 }

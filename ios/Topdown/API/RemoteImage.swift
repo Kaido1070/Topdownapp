@@ -13,7 +13,7 @@ actor ImagePipeline {
         for url in candidates where !failed.contains(url) {
             let key = "\(url.absoluteString)#\(Int(maxPixel))" as NSString
             if let hit = cache.object(forKey: key) { return hit }
-            guard let (data, resp) = try? await API.shared.session.data(from: url),
+            guard let (data, resp) = try? await API.shared.session.data(for: API.shared.authorized(url)),
                   (resp as? HTTPURLResponse)?.statusCode == 200,
                   let img = Self.downsample(data, maxPixel: maxPixel) else {
                 failed.insert(url)

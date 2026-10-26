@@ -125,7 +125,7 @@ struct VideoScreen: View {
                 let r = try await API.shared.resolve(item)
                 resolved = r
                 guard let url = Site.url(r.url) else { throw APIError.server("رابط تشغيل غير صالح") }
-                let asset = AVURLAsset(url: url, options: [AVURLAssetHTTPCookiesKey: API.shared.sessionCookies])
+                let asset = AVURLAsset(url: url, options: API.shared.assetOptions(for: url))
                 start(AVPlayer(playerItem: AVPlayerItem(asset: asset)), resume: 0)
                 library.recordWatch(item)
             } catch {
@@ -186,7 +186,7 @@ struct VideoPreview: View {
         .frame(width: 340, height: 200)
         .task {
             guard !item.opensDetails, let r = try? await API.shared.resolve(item), let url = Site.url(r.url) else { return }
-            let p = AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url, options: [AVURLAssetHTTPCookiesKey: API.shared.sessionCookies])))
+            let p = AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: url, options: API.shared.assetOptions(for: url))))
             p.isMuted = true
             p.play()
             player = p

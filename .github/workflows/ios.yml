@@ -77,6 +77,30 @@ jobs:
           xcodebuild -project ios/Topdown.xcodeproj -scheme Topdown -configuration Debug \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build-sim \
             CODE_SIGNING_ALLOWED=NO build > sim.log 2>&1 || { grep -E "error:" -A3 sim.log | head -200; exit 1; }
+      - name: Start local Topdown backend
+        run: |
+          git clone --depth 1 https://github.com/Kaido1070/topdown backend
+          cd backend
+          mkdir -p dist && echo ok > dist/index.html
+          printf 'TOPDOWN_PASSWORD=testpass\nSESSION_SECRET=testsecret\n' > .dev.vars
+          rm -f wrangler.toml
+          (npx --yes wrangler@4 pages dev dist --d1 DB=local-topdown --port 8788 --ip 127.0.0.1 > ../backend.log 2>&1 &)
+          for i in $(seq 1 90); do curl -s http://127.0.0.1:8788/api/session && break; sleep 2; done
+          curl -s -X POST -H 'content-type: application/json' -d '{"password":"testpass"}' http://127.0.0.1:8788/api/login || true
+          python3 - <<'PY'
+          import sqlite3, glob
+          for db in glob.glob('.wrangler/state/v3/d1/**/*.sqlite', recursive=True):
+              if 'metadata' in db: continue
+              c = sqlite3.connect(db)
+              for f in sorted(glob.glob('migrations/*.sql')):
+                  try: c.executescript(open(f).read())
+                  except Exception as e: print(db, f, e)
+              c.commit()
+          PY
+          curl -s -X POST -H 'content-type: application/json' -d '{"password":"testpass"}' http://127.0.0.1:8788/api/login
+          echo
+          curl -s -o /dev/null -w "stories warmup %{http_code} %{time_total}s\n" "http://127.0.0.1:8788/api/session"
+
       - name: Launch and screenshot
         run: |
           UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys;d=json.load(sys.stdin)['devices'];print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
@@ -86,20 +110,18 @@ jobs:
           xcrun simctl install "$UDID" build-sim/Build/Products/Debug-iphonesimulator/Topdown.app
           mkdir -p shots
           xcrun simctl launch "$UDID" com.topdown.app
-          sleep 12
-          xcrun simctl io "$UDID" screenshot shots/01-launch.png
-          if [ -n "${TOPDOWN_PASSWORD}" ]; then
-            xcrun simctl terminate "$UDID" com.topdown.app
-            xcrun simctl launch "$UDID" com.topdown.app -smokePassword "${TOPDOWN_PASSWORD}"
-            sleep 25; xcrun simctl io "$UDID" screenshot shots/02-explore.png
-            xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app -smokeTab stories
-            sleep 20; xcrun simctl io "$UDID" screenshot shots/03-stories.png
-            xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app -smokeTab account
-            sleep 15; xcrun simctl io "$UDID" screenshot shots/04-account.png
-          fi
-          pgrep -fl Topdown.app || { echo "APP NOT RUNNING (crash?)"; xcrun simctl spawn "$UDID" log show --last 2m --predicate 'process == "Topdown"' | tail -80; exit 1; }
-        env:
-          TOPDOWN_PASSWORD: ${{ secrets.TOPDOWN_PASSWORD }}
+          sleep 10
+          xcrun simctl io "$UDID" screenshot shots/01-login.png
+          ARGS="-smokeBaseURL http://127.0.0.1:8788/ -smokePassword testpass"
+          xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS
+          sleep 40; xcrun simctl io "$UDID" screenshot shots/02-anime.png
+          xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab stories
+          sleep 40; xcrun simctl io "$UDID" screenshot shots/03-stories.png
+          xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab account
+          sleep 15; xcrun simctl io "$UDID" screenshot shots/04-account.png
+          pgrep -fl Topdown.app || { echo "APP NOT RUNNING (crash?)"; exit 1; }
+          grep -E "GET /api|POST /api" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | tail -40
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -107,7 +107,7 @@ final class DownloadCenter {
 
     func qualityOptions(for video: CapturedVideo) async -> [QualityOption] {
         if video.kind == "hls" {
-            let asset = AVURLAsset(url: video.url, options: [AVURLAssetHTTPCookiesKey: API.shared.sessionCookies])
+            let asset = AVURLAsset(url: video.url, options: API.shared.assetOptions(for: video.url))
             if let variants = try? await asset.load(.variants), !variants.isEmpty {
                 var seen = Set<Int>()
                 let opts: [QualityOption] = variants.compactMap { v in
@@ -174,7 +174,7 @@ final class DownloadCenter {
         Task {
             if let thumb = video.thumbnail { await fetchThumbnail(thumb, for: video.id) }
             if record.kind == "hls" {
-                let asset = AVURLAsset(url: video.url, options: [AVURLAssetHTTPCookiesKey: API.shared.sessionCookies])
+                let asset = AVURLAsset(url: video.url, options: API.shared.assetOptions(for: video.url))
                 let config = AVAssetDownloadConfiguration(asset: asset, title: video.title)
                 if let v = quality.variant {
                     config.primaryContentConfiguration.variantQualifiers = [AVAssetVariantQualifier(variant: v)]
@@ -483,10 +483,7 @@ final class DownloadCenter {
 
     /// طلب يحمل كوكيز جلسة الموقع (لازم لروابط /api/stream والبروكسي).
     nonisolated static func request(_ url: URL) -> URLRequest {
-        var r = URLRequest(url: url)
-        for (k, v) in API.shared.cookieHeader(for: url) { r.setValue(v, forHTTPHeaderField: k) }
-        r.setValue(API.userAgent, forHTTPHeaderField: "User-Agent")
-        return r
+        API.shared.authorized(url)
     }
 
     /// تحميل حلقات عمل كامل بالجودة المفضّلة (أو الأعلى).
