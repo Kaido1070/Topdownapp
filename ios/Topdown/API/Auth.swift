@@ -27,8 +27,16 @@ final class Auth {
             state = (API.shared.hasSessionCookie || Keychain.password != nil) ? .signedIn : .signedOut
             return
         }
-        state = await API.shared.checkSession() ? .signedIn : .signedOut
-        if state == .signedIn { await Library.shared.refresh() }
+        switch await API.shared.sessionStatus() {
+        case .valid:
+            state = .signedIn
+            await Library.shared.refresh()
+        case .invalid:
+            state = .signedOut
+        case .unreachable:
+            state = (API.shared.hasSessionCookie || Keychain.password != nil) ? .signedIn : .signedOut
+            if state == .signedIn { AppModel.shared.tab = .library }
+        }
     }
 
     func login(_ password: String) async throws {

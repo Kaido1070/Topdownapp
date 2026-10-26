@@ -93,10 +93,19 @@ final class API: @unchecked Sendable {
 
     // MARK: - المصادقة
 
-    func checkSession() async -> Bool {
+    enum SessionStatus { case valid, invalid, unreachable }
+
+    func sessionStatus() async -> SessionStatus {
         struct S: Decodable { let authenticated: Bool }
-        if let s: S = try? await get("/api/session", retry: false), s.authenticated { return true }
-        return await silentRelogin()
+        do {
+            let s: S = try await get("/api/session", retry: false)
+            if s.authenticated { return .valid }
+        } catch APIError.server, APIError.unauthorized {
+            // نكمل لمحاولة الدخول الصامت
+        } catch {
+            return .unreachable
+        }
+        return await silentRelogin() ? .valid : .invalid
     }
 
     func login(password: String) async throws {
@@ -165,7 +174,7 @@ final class API: @unchecked Sendable {
         }
         let data: Data, resp: URLResponse
         do { (data, resp) = try await session.data(for: req) }
-        catch let e as URLError where [.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed].contains(e.code) {
+        catch let e as URLError where e.code != .cancelled {
             throw APIError.offline
         }
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0

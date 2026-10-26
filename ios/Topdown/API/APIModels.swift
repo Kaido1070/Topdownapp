@@ -16,6 +16,27 @@ struct MediaItem: Codable, Hashable, Identifiable {
 
     var key: String { providerId + ":" + id }
 
+    init(providerId: String, id: String, title: String, thumbnail: String? = nil, durationSeconds: Double? = nil,
+         embed: String? = nil, tags: [String]? = nil, createdAt: Double? = nil, watchedAt: Double? = nil, progressSeconds: Double? = nil) {
+        self.providerId = providerId; self.id = id; self.title = title; self.thumbnail = thumbnail
+        self.durationSeconds = durationSeconds; self.embed = embed; self.tags = tags
+        self.createdAt = createdAt; self.watchedAt = watchedAt; self.progressSeconds = progressSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        providerId = try c.decode(String.self, forKey: .providerId)
+        id = try c.lenientString(.id) ?? ""
+        title = (try? c.decode(String.self, forKey: .title)) ?? id
+        thumbnail = try? c.decodeIfPresent(String.self, forKey: .thumbnail)
+        durationSeconds = c.lenientDouble(.durationSeconds)
+        embed = try? c.decodeIfPresent(String.self, forKey: .embed)
+        tags = try? c.decodeIfPresent([String].self, forKey: .tags)
+        createdAt = c.lenientDouble(.createdAt)
+        watchedAt = c.lenientDouble(.watchedAt)
+        progressSeconds = c.lenientDouble(.progressSeconds)
+    }
+
     /// الأعمال من المصادر الجديدة تفتح تفاصيل وحلقات، والمصدر القديم يُشغَّل مباشرة.
     var opensDetails: Bool {
         providerId != "hentaitime" && AnimeSource.allCases.contains { $0.rawValue == providerId && $0 != .all && $0 != .legacy }
@@ -79,6 +100,26 @@ struct StoryItem: Codable, Hashable, Identifiable {
     var watchedAt: Double?
     var id: String { url }
 
+    init(title: String, url: String, cover: String? = nil, meta: String? = nil, latestChapter: Double? = nil) {
+        self.title = title; self.url = url; self.cover = cover; self.meta = meta; self.latestChapter = latestChapter
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(String.self, forKey: .url)
+        title = (try? c.decode(String.self, forKey: .title)) ?? url
+        cover = try? c.decodeIfPresent(String.self, forKey: .cover)
+        meta = try? c.decodeIfPresent(String.self, forKey: .meta)
+        latestChapter = c.lenientDouble(.latestChapter)
+        views = c.lenientDouble(.views)
+        popularity = c.lenientDouble(.popularity)
+        updatedAt = try? c.decodeIfPresent(String.self, forKey: .updatedAt)
+        createdAt = c.lenientDouble(.createdAt)
+        lastChapterUrl = try? c.decodeIfPresent(String.self, forKey: .lastChapterUrl)
+        lastChapterTitle = try? c.decodeIfPresent(String.self, forKey: .lastChapterTitle)
+        watchedAt = c.lenientDouble(.watchedAt)
+    }
+
     var payload: StoryItem {
         StoryItem(title: title, url: url, cover: cover, latestChapter: latestChapter)
     }
@@ -99,6 +140,18 @@ struct ChapterLink: Codable, Hashable, Identifiable {
     var number: Double?
     var publishedAt: String?
     var id: String { url }
+
+    init(url: String, title: String, number: Double? = nil, publishedAt: String? = nil) {
+        self.url = url; self.title = title; self.number = number; self.publishedAt = publishedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(String.self, forKey: .url)
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        number = c.lenientDouble(.number)
+        publishedAt = try? c.decodeIfPresent(String.self, forKey: .publishedAt)
+    }
 
     var displayTitle: String {
         if let n = number { return "الفصل " + ChapterDownload.format(n) }
@@ -220,4 +273,19 @@ func interleave<T>(_ groups: [[T]]) -> [T] {
     let maxCount = groups.map(\.count).max() ?? 0
     for i in 0..<maxCount { for g in groups where i < g.count { out.append(g[i]) } }
     return out
+}
+
+extension KeyedDecodingContainer {
+    /// يقبل الرقم سواء جاء رقمًا أو نصًا.
+    func lenientDouble(_ key: Key) -> Double? {
+        if let d = try? decodeIfPresent(Double.self, forKey: key) { return d }
+        if let s = try? decodeIfPresent(String.self, forKey: key) { return Double(s.replacingOccurrences(of: ",", with: ".")) }
+        return nil
+    }
+
+    func lenientString(_ key: Key) throws -> String? {
+        if let s = try? decodeIfPresent(String.self, forKey: key) { return s }
+        if let i = try? decodeIfPresent(Int.self, forKey: key) { return String(i) }
+        return nil
+    }
 }
