@@ -19,6 +19,8 @@ final class Auth {
         switch defaults.string(forKey: "smokeTab") {
         case "stories": AppModel.shared.mode = .stories
         case "account": AppModel.shared.tab = .account
+        case "switchStories":
+            Task { try? await Task.sleep(for: .seconds(8)); withAnimation(.smooth) { AppModel.shared.mode = .stories } }
         default: break
         }
         #endif

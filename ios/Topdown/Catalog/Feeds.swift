@@ -150,6 +150,11 @@ final class StoryFeed {
         }
     }
 
+    /// آخر حالة لكل مصدر (عدد النتائج أو الخطأ) لعرضها للمستخدم.
+    private(set) var sourceStatus: [StorySource: String] = [:]
+    /// هل اكتمل تحميل واحد على الأقل؟ (لا نعرض «لا توجد نتائج» قبله)
+    private(set) var didLoad = false
+
     func loadGenres() async {
         if genres.isEmpty, let g = try? await API.shared.storyGenres() { genres = g }
     }
@@ -159,6 +164,7 @@ final class StoryFeed {
         page = 1
         exhausted = []
         items = []
+        sourceStatus = [:]
         await fetch(page: 1, append: false)
     }
 
@@ -170,9 +176,16 @@ final class StoryFeed {
     private func fetch(page p: Int, append: Bool) async {
         let gen = generation
         if append { loadingMore = true } else { loading = true; errors = [] }
+        defer {
+            if gen == generation { loading = false; loadingMore = false }
+        }
         let targets = (source == .all ? StorySource.concrete : [source]).filter { !exhausted.contains($0) }
         let q = query.trimmingCharacters(in: .whitespaces), g = genre
-        var results: [(StorySource, Result<StoryPage, Error>)] = []
+        let base = append ? items : []
+        var groups: [StorySource: [StoryItem]] = [:]
+        var anyNext = false
+
+        // نعرض نتائج كل مصدر فور وصولها بدل انتظار أبطأ مصدر
         await withTaskGroup(of: (StorySource, Result<StoryPage, Error>).self) { group in
             for s in targets {
                 group.addTask {
@@ -180,28 +193,28 @@ final class StoryFeed {
                     catch { return (s, .failure(error)) }
                 }
             }
-            for await r in group { results.append(r) }
-        }
-        guard gen == generation else { return }
-        var groups: [[StoryItem]] = []
-        var anyNext = false
-        for s in targets {
-            guard let r = results.first(where: { $0.0 == s })?.1 else { continue }
-            switch r {
-            case .success(let pg):
-                groups.append(pg.items.values)
-                if pg.nextPage == nil { exhausted.insert(s) } else { anyNext = true }
-            case .failure(let e):
-                if !append { errors.append("\(s.name): \(e.localizedDescription)") }
-                exhausted.insert(s)
+            for await (s, result) in group {
+                guard gen == generation else { continue }
+                switch result {
+                case .success(let pg):
+                    let list = pg.items.values
+                    groups[s] = list
+                    sourceStatus[s] = "\(list.count)"
+                    if pg.nextPage == nil { exhausted.insert(s) } else { anyNext = true }
+                case .failure(let e):
+                    if (e as? URLError)?.code == .cancelled || e is CancellationError { continue }
+                    if !append { errors.append("\(s.name): \(e.localizedDescription)") }
+                    sourceStatus[s] = "خطأ"
+                    exhausted.insert(s)
+                }
+                var seen = Set(base.map(\.url))
+                let merged = interleave(targets.compactMap { groups[$0] }).filter { seen.insert($0.url).inserted }
+                items = base + merged
             }
         }
-        var seen = Set(items.map(\.url))
-        let merged = interleave(groups).filter { seen.insert($0.url).inserted }
-        items = append ? items + merged : merged
+        guard gen == generation else { return }
         page = p
         hasNext = anyNext
-        loading = false
-        loadingMore = false
+        if !Task.isCancelled { didLoad = true }
     }
 }

@@ -30,14 +30,40 @@ extension View {
 
 struct ModeSwitch: View {
     @Environment(AppModel.self) private var app
+    @Namespace private var glass
+
     var body: some View {
-        @Bindable var app = app
-        Picker("المحتوى", selection: $app.mode.animation(.smooth)) {
-            Label("الأنمي", systemImage: "play.rectangle.fill").tag(BrowseMode.anime)
-            Label("القصص", systemImage: "book.fill").tag(BrowseMode.stories)
+        GlassEffectContainer(spacing: 0) {
+            HStack(spacing: 6) {
+                option(.anime, title: "الأنمي", icon: "play.rectangle.fill")
+                option(.stories, title: "القصص", icon: "book.fill")
+            }
+            .padding(5)
+            .glassEffect(.regular, in: .capsule)
         }
-        .pickerStyle(.segmented)
         .padding(.horizontal)
+        .sensoryFeedback(.selection, trigger: app.mode)
+    }
+
+    private func option(_ mode: BrowseMode, title: String, icon: String) -> some View {
+        let selected = app.mode == mode
+        return Button {
+            withAnimation(.smooth(duration: 0.3)) { app.mode = mode }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(selected ? Color.black : Color.primary)
+                .frame(maxWidth: .infinity, minHeight: 50)
+                .background {
+                    if selected {
+                        Capsule().fill(Theme.accent)
+                            .matchedGeometryEffect(id: "mode", in: glass)
+                    }
+                }
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -73,7 +99,7 @@ struct ExploreView: View {
             .task { if anime.items.isEmpty && !anime.loading { await anime.reload() } }
             .task(id: app.mode) {
                 if app.mode == .stories && stories.items.isEmpty && !stories.loading {
-                    await stories.loadGenres()
+                    Task { await stories.loadGenres() }
                     await stories.reload()
                 }
             }
@@ -284,15 +310,43 @@ struct StoryGrid: View {
     var feed: StoryFeed
 
     var body: some View {
-        FeedStatus(loading: feed.loading, errors: feed.errors, empty: feed.items.isEmpty) { await feed.reload() }
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 14)], spacing: 18) {
-            ForEach(feed.sorted) { item in
-                StoryCardView(item: item)
-                    .onAppear { if item.url == feed.items.last?.url { Task { await feed.loadMore() } } }
+        Group {
+            if !feed.didLoad && feed.items.isEmpty {
+                VStack(spacing: 12) {
+                    ProgressView().controlSize(.large).tint(Theme.accent)
+                    Text("جاري تحميل القصص…").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity).padding(.top, 80)
+            } else {
+                FeedStatus(loading: feed.loading, errors: feed.errors, empty: feed.items.isEmpty) { await feed.reload() }
             }
+            if !feed.sourceStatus.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(StorySource.concrete.filter { feed.sourceStatus[$0] != nil }) { s in
+                            Text("\(s.name): \(feed.sourceStatus[s] ?? "")")
+                                .font(.caption2)
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .glassEffect(.regular, in: .capsule)
+                        }
+                        if feed.loading { ProgressView().controlSize(.mini) }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 14)], spacing: 18) {
+                ForEach(feed.sorted) { item in
+                    StoryCardView(item: item)
+                        .onAppear { if item.url == feed.items.last?.url { Task { await feed.loadMore() } } }
+                }
+            }
+            .padding(.horizontal)
+            if feed.loadingMore { ProgressView().padding() }
         }
-        .padding(.horizontal)
-        if feed.loadingMore { ProgressView().padding() }
+        // ضمان إضافي: إذا ظهرت الشبكة ولم يبدأ أي تحميل، نبدأه هنا
+        .task {
+            if !feed.didLoad && !feed.loading && feed.items.isEmpty { await feed.reload() }
+        }
     }
 }
 
