@@ -375,13 +375,19 @@ struct StoryCardView: View {
     let item: StoryItem
     var width: CGFloat? = nil
     @Environment(Library.self) private var library
+    @State private var fallback: [URL] = []
 
     var body: some View {
         NavigationLink(value: Route.story(item)) {
             VStack(alignment: .leading, spacing: 6) {
-                RemoteImage(urls: Site.mangaThumb(item.cover, ref: item.url), maxPixel: 420)
+                RemoteImage(urls: Site.mangaThumb(item.cover, ref: item.url) + fallback, maxPixel: 420)
                     .aspectRatio(5/7, contentMode: .fit)
                     .clipShape(.rect(cornerRadius: 14))
+                    .task(id: item.url) {
+                        guard item.cover == nil || item.cover?.isEmpty == true, fallback.isEmpty,
+                              let covers = try? await API.shared.storyCovers(item.url) else { return }
+                        fallback = covers.flatMap { Site.mangaThumb($0, ref: item.url) }
+                    }
                     .overlay(alignment: .topLeading) {
                         if library.isSaved(item) {
                             Image(systemName: "star.fill").font(.caption).foregroundStyle(Theme.accent)

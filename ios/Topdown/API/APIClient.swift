@@ -302,6 +302,11 @@ final class API: @unchecked Sendable {
     func stories(page: Int, q: String, genre: String, source: StorySource) async throws -> StoryPage {
         try await get("/api/stories", ["page": String(page), "q": q, "genre": source == .legacy ? genre : "", "source": source.rawValue])
     }
+    /// أغلفة بديلة عندما لا يرسل المصدر غلافًا (نفس resolveFallback في الموقع).
+    func storyCovers(_ url: String) async throws -> [String] {
+        struct R: Decodable { let covers: [String]? }
+        return (try await get("/api/story/cover", ["url": url]) as R).covers ?? []
+    }
     func storyGenres() async throws -> [Tag] { (try await get("/api/story/genres") as GenresResponse).genres ?? [] }
     func story(_ url: String) async throws -> StoryDetail { try await get("/api/story", ["url": url]) }
     func chapter(_ url: String) async throws -> StoryChapter { try await get("/api/story/chapter", ["url": url]) }
