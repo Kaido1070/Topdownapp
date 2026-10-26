@@ -113,7 +113,10 @@ enum Storage {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: url.path(), isDirectory: &isDir) else { return 0 }
-        if !isDir.boolValue { return Int64((try? fm.attributesOfItem(atPath: url.path())[.size] as? NSNumber)??.int64Value ?? 0) }
+        if !isDir.boolValue {
+            let attrs = try? fm.attributesOfItem(atPath: url.path())
+            return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        }
         var total: Int64 = 0
         if let e = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) {
             for case let f as URL in e { total += Int64((try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }

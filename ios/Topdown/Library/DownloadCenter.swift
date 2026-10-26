@@ -129,8 +129,8 @@ final class DownloadCenter {
         var size = ""
         var req = await WebSession.request(video.url)
         req.httpMethod = "HEAD"
-        if let (_, resp) = try? await URLSession.shared.data(for: req), resp.expectedContentLength > 0 {
-            size = Storage.format(resp.expectedContentLength)
+        if let result = try? await URLSession.shared.data(for: req), result.1.expectedContentLength > 0 {
+            size = Storage.format(result.1.expectedContentLength)
         }
         return [QualityOption(id: "original", label: "الأصلية", detail: ["MP4", size].filter { !$0.isEmpty }.joined(separator: " • "),
                               height: 0, bitrate: 0, variant: nil)]
@@ -250,7 +250,7 @@ final class DownloadCenter {
         }
         for url in candidates {
             let req = await WebSession.request(url)
-            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+            guard let got = await Self.get(req), case let (data, resp) = got,
                   (resp as? HTTPURLResponse)?.statusCode == 200, UIImage(data: data) != nil else { continue }
             let dest = Storage.thumbsDir.appending(path: Storage.hash(id) + ".jpg")
             try? data.write(to: dest)
@@ -377,23 +377,27 @@ final class DownloadCenter {
 
             var pages = [String?](repeating: nil, count: images.count)
             var done = 0
-            try await withThrowingTaskGroup(of: (Int, String?).self) { group in
+            await withTaskGroup(of: (Int, String?).self) { group in
                 var next = 0
-                func add() {
-                    let i = next; next += 1
-                    let src = images[i]
+                while next < min(4, images.count) {
+                    let i = next, src = images[i]
                     group.addTask { (i, await Self.fetchPage(src, chapterURL: chapterURL, index: i, folder: folder)) }
+                    next += 1
                 }
-                for _ in 0..<min(4, images.count) { add() }
-                while let (i, name) = try await group.next() {
+                while let result = await group.next() {
                     if Task.isCancelled { group.cancelAll(); return }
-                    pages[i] = name
+                    pages[result.0] = result.1
                     done += 1
                     let fraction = Double(done) / Double(images.count)
                     updateChapter(storyURL, chapterURL) { $0.progress = fraction }
-                    if next < images.count { add() }
+                    if next < images.count {
+                        let i = next, src = images[i]
+                        group.addTask { (i, await Self.fetchPage(src, chapterURL: chapterURL, index: i, folder: folder)) }
+                        next += 1
+                    }
                 }
             }
+            if Task.isCancelled { return }
             let saved = pages.compactMap { $0 }
             if saved.count < max(1, images.count * 9 / 10) { throw URLError(.cannotLoadFromNetwork) }
             updateChapter(storyURL, chapterURL) {
@@ -420,7 +424,7 @@ final class DownloadCenter {
         }
         for url in urls {
             let req = await WebSession.request(url)
-            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+            guard let got = await Self.get(req), case let (data, resp) = got,
                   let http = resp as? HTTPURLResponse, http.statusCode == 200,
                   data.count > 200, UIImage(data: data) != nil else { continue }
             let ext = (http.mimeType ?? "").contains("png") ? "png" : (http.mimeType ?? "").contains("webp") ? "webp" : "jpg"
@@ -438,7 +442,7 @@ final class DownloadCenter {
         if let p = comps.url { urls.append(p) }
         for c in urls {
             let req = await WebSession.request(c)
-            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+            guard let got = await Self.get(req), case let (data, resp) = got,
                   (resp as? HTTPURLResponse)?.statusCode == 200, UIImage(data: data) != nil else { continue }
             let dest = Storage.thumbsDir.appending(path: "s_" + Storage.hash(url) + ".jpg")
             try? data.write(to: dest)
@@ -494,6 +498,10 @@ final class DownloadCenter {
     func deleteEverything() {
         for v in videos { remove(video: v) }
         for s in stories { remove(story: s) }
+    }
+
+    nonisolated private static func get(_ req: URLRequest) async -> (Data, URLResponse)? {
+        try? await URLSession.shared.data(for: req)
     }
 
     // MARK: - الحفظ

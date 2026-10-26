@@ -52,10 +52,6 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIBackgroundModes:
           - audio
-          - fetch
-          - processing
-        BGTaskSchedulerPermittedIdentifiers:
-          - com.topdown.app.refresh
         NSFaceIDUsageDescription: يُستخدم Face ID لقفل التطبيق وحماية خصوصيتك.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true

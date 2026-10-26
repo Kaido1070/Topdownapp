@@ -29,7 +29,8 @@ struct DownloadsView: View {
                 }
                 if !activeChapters.isEmpty {
                     Section("القصص") {
-                        ForEach(activeChapters, id: \.1.url) { s, c in
+                        ForEach(activeChapters, id: \.1.url) { pair in
+                            let (s, c) = pair
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(s.title).font(.subheadline.weight(.semibold)).lineLimit(1)
