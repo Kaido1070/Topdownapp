@@ -128,3 +128,38 @@ enum Storage {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
+
+struct CapturedVideo: Identifiable, Equatable {
+    var id: String { providerId + ":" + itemId }
+    let providerId: String
+    let itemId: String
+    let title: String
+    let thumbnail: String?
+    let durationSeconds: Double?
+    let url: URL
+    let kind: String // hls | mp4 | direct
+
+    init(providerId: String, itemId: String, title: String, thumbnail: String?, durationSeconds: Double?, url: URL, kind: String) {
+        self.providerId = providerId; self.itemId = itemId; self.title = title; self.thumbnail = thumbnail
+        self.durationSeconds = durationSeconds; self.url = url; self.kind = kind
+    }
+
+    init?(_ item: MediaItem, _ resolved: Resolved) {
+        guard let url = Site.url(resolved.url) else { return nil }
+        self.init(providerId: item.providerId, itemId: item.id, title: item.title, thumbnail: item.thumbnail,
+                  durationSeconds: item.durationSeconds, url: url, kind: resolved.kind)
+    }
+}
+
+struct CapturedStory: Equatable {
+    let title: String
+    let url: String
+    let cover: String?
+    let chapters: [ChapterLink]
+}
+
+struct CapturedChapter: Equatable {
+    let url: String
+    let title: String
+    let images: [String]
+}

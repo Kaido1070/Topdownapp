@@ -1,9 +1,8 @@
 import SwiftUI
-import WebKit
 
 struct SettingsView: View {
     @Environment(DownloadCenter.self) private var center
-    @Environment(WebModel.self) private var web
+    @Environment(Auth.self) private var auth
     @AppStorage("preferredQuality") private var quality = "ask"
     @AppStorage("allowCellular") private var cellular = true
     @AppStorage("notifyOnFinish") private var notify = true
@@ -41,14 +40,15 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.segmented)
                 }
-                Section("الموقع") {
-                    LabeledContent("الرابط", value: Site.home.host() ?? "")
-                    Button("مسح ذاكرة الموقع المؤقتة") {
-                        WKWebsiteDataStore.default().removeData(
-                            ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache],
-                            modifiedSince: .distantPast) { web.reload() }
+                Section("الحساب") {
+                    LabeledContent("الموقع", value: Site.home.host() ?? "")
+                    LabeledContent("الجلسة", value: Keychain.password != nil ? "محفوظة — دخول تلقائي" : "مؤقتة")
+                    Button("مسح الصور المؤقتة") {
+                        API.shared.session.configuration.urlCache?.removeAllCachedResponses()
+                        Task { await ImagePipeline.shared.clear() }
+                        AppModel.shared.show("تم مسح الذاكرة المؤقتة")
                     }
-                    Button("تسجيل الخروج ومسح بيانات الدخول", role: .destructive) { confirmLogout = true }
+                    Button("تسجيل الخروج", role: .destructive) { confirmLogout = true }
                 }
                 Section("المساحة") {
                     LabeledContent("المحمّلات", value: center.storageSummary)
@@ -57,7 +57,7 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("الإصدار", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
                 } footer: {
-                    Text("الملفات المحمّلة تظهر أيضًا في تطبيق «الملفات» داخل مجلد Topdown.")
+                    Text("المحمّلات تبقى على جهازك وتشتغل بدون إنترنت، وتظهر أيضًا في تطبيق «الملفات» داخل مجلد Topdown.")
                 }
             }
             .navigationTitle("الإعدادات")
@@ -65,10 +65,7 @@ struct SettingsView: View {
                 Button("حذف الكل", role: .destructive) { center.deleteEverything() }
             }
             .confirmationDialog("تسجيل الخروج؟", isPresented: $confirmLogout, titleVisibility: .visible) {
-                Button("تسجيل الخروج", role: .destructive) {
-                    WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
-                                                            modifiedSince: .distantPast) { web.goHome() }
-                }
+                Button("تسجيل الخروج", role: .destructive) { Task { await auth.logout() } }
             }
         }
     }

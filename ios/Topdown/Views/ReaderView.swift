@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// قارئ القصص بدون إنترنت: تمرير عمودي، تكبير، حفظ آخر صفحة، وانتقال للفصل التالي.
-struct ReaderView: View {
+struct OfflineReaderView: View {
     let storyURL: String
     @State var chapterURL: String
     @Environment(DownloadCenter.self) private var center

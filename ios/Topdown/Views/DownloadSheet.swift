@@ -152,3 +152,14 @@ private struct ChapterOptions: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 }
+
+enum DownloadRequest: Identifiable {
+    case video(CapturedVideo)
+    case chapter(CapturedChapter, CapturedStory)
+    var id: String {
+        switch self {
+        case .video(let v): "v:" + v.id
+        case .chapter(let c, _): "c:" + c.url
+        }
+    }
+}

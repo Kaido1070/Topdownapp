@@ -107,7 +107,7 @@ final class DownloadCenter {
 
     func qualityOptions(for video: CapturedVideo) async -> [QualityOption] {
         if video.kind == "hls" {
-            let asset = AVURLAsset(url: video.url)
+            let asset = AVURLAsset(url: video.url, options: [AVURLAssetHTTPCookiesKey: API.shared.sessionCookies])
             if let variants = try? await asset.load(.variants), !variants.isEmpty {
                 var seen = Set<Int>()
                 let opts: [QualityOption] = variants.compactMap { v in
@@ -127,9 +127,9 @@ final class DownloadCenter {
             return [QualityOption(id: "auto", label: "تلقائي", detail: "أفضل جودة متاحة", height: 0, bitrate: 0, variant: nil)]
         }
         var size = ""
-        var req = await WebSession.request(video.url)
+        var req = Self.request(video.url)
         req.httpMethod = "HEAD"
-        if let result = try? await URLSession.shared.data(for: req), result.1.expectedContentLength > 0 {
+        if let result = try? await API.shared.session.data(for: req), result.1.expectedContentLength > 0 {
             size = Storage.format(result.1.expectedContentLength)
         }
         return [QualityOption(id: "original", label: "الأصلية", detail: ["MP4", size].filter { !$0.isEmpty }.joined(separator: " • "),
@@ -154,7 +154,7 @@ final class DownloadCenter {
 
     func isDownloaded(_ v: CapturedVideo) -> VideoDownload? { videos.first { $0.id == v.id } }
 
-    func download(_ video: CapturedVideo, quality: QualityOption) {
+    func download(_ video: CapturedVideo, quality: QualityOption, quiet: Bool = false) {
         if let existing = videos.firstIndex(where: { $0.id == video.id }) {
             if videos[existing].state.isActive { AppModel.shared.show("الفيديو قيد التحميل"); return }
             remove(video: videos[existing], deleteFiles: true)
@@ -166,13 +166,15 @@ final class DownloadCenter {
             durationSeconds: video.durationSeconds, state: .queued, progress: 0, bytes: 0, createdAt: .now)
         videos.insert(record, at: 0)
         requestNotificationPermission()
-        Haptics.success()
-        AppModel.shared.show("بدأ التحميل: \(video.title)")
+        if !quiet {
+            Haptics.success()
+            AppModel.shared.show("بدأ التحميل: \(video.title)")
+        }
 
         Task {
             if let thumb = video.thumbnail { await fetchThumbnail(thumb, for: video.id) }
             if record.kind == "hls" {
-                let asset = AVURLAsset(url: video.url)
+                let asset = AVURLAsset(url: video.url, options: [AVURLAssetHTTPCookiesKey: API.shared.sessionCookies])
                 let config = AVAssetDownloadConfiguration(asset: asset, title: video.title)
                 if let v = quality.variant {
                     config.primaryContentConfiguration.variantQualifiers = [AVAssetVariantQualifier(variant: v)]
@@ -184,7 +186,7 @@ final class DownloadCenter {
                 let task = hlsSession.makeAssetDownloadTask(downloadConfiguration: config)
                 start(task, id: video.id)
             } else {
-                let req = await WebSession.request(video.url)
+                let req = Self.request(video.url)
                 start(fileSession.downloadTask(with: req), id: video.id)
             }
         }
@@ -242,14 +244,8 @@ final class DownloadCenter {
     }
 
     private func fetchThumbnail(_ raw: String, for id: String) async {
-        var candidates: [URL] = []
-        if let u = WebSession.absolute(raw) { candidates.append(u) }
-        if raw.hasPrefix("http"), let enc = raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=?+"))),
-           let proxy = WebSession.absolute("/api/video-thumb?u=\(enc)&v=4") {
-            candidates.append(proxy)
-        }
-        for url in candidates {
-            let req = await WebSession.request(url)
+        for url in Site.videoThumb(raw) {
+            let req = Self.request(url)
             guard let got = await Self.get(req), case let (data, resp) = got,
                   (resp as? HTTPURLResponse)?.statusCode == 200, UIImage(data: data) != nil else { continue }
             let dest = Storage.thumbsDir.appending(path: Storage.hash(id) + ".jpg")
@@ -362,13 +358,7 @@ final class DownloadCenter {
         do {
             var images = knownImages ?? []
             if images.isEmpty {
-                let enc = chapterURL.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? chapterURL
-                guard let api = WebSession.absolute("/api/story/chapter?url=" + enc) else { throw URLError(.badURL) }
-                let req = await WebSession.request(api)
-                let (data, resp) = try await URLSession.shared.data(for: req)
-                guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.userAuthenticationRequired) }
-                struct Payload: Decodable { let title: String?; let images: [String] }
-                images = try JSONDecoder().decode(Payload.self, from: data).images
+                images = try await API.shared.chapter(chapterURL).images
             }
             guard !images.isEmpty else { throw URLError(.zeroByteResource) }
             guard let folderPath = chapter(storyURL, chapterURL)?.folder else { return }
@@ -414,16 +404,8 @@ final class DownloadCenter {
 
     /// يجرب الرابط الأصلي ثم بروكسي الموقع (/api/manga-image) مثل ما يفعل الموقع نفسه.
     nonisolated private static func fetchPage(_ src: String, chapterURL: String, index: Int, folder: URL) async -> String? {
-        var urls: [URL] = []
-        if let direct = WebSession.absolute(src) { urls.append(direct) }
-        var comps = URLComponents(url: Site.home.appending(path: "api/manga-image"), resolvingAgainstBaseURL: false)!
-        for attempt in 0..<2 {
-            comps.queryItems = [.init(name: "u", value: src), .init(name: "r", value: chapterURL),
-                                .init(name: "v", value: "5"), .init(name: "retry", value: String(attempt))]
-            if let u = comps.url { urls.append(u) }
-        }
-        for url in urls {
-            let req = await WebSession.request(url)
+        for url in Site.mangaPage(src, chapter: chapterURL) {
+            let req = Self.request(url)
             guard let got = await Self.get(req), case let (data, resp) = got,
                   let http = resp as? HTTPURLResponse, http.statusCode == 200,
                   data.count > 200, UIImage(data: data) != nil else { continue }
@@ -435,13 +417,8 @@ final class DownloadCenter {
     }
 
     private func fetchCover(_ raw: String, story url: String) async {
-        guard let u = WebSession.absolute(raw) else { return }
-        var urls = [u]
-        var comps = URLComponents(url: Site.home.appending(path: "api/manga-thumb"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [.init(name: "u", value: raw), .init(name: "r", value: url), .init(name: "v", value: "4")]
-        if let p = comps.url { urls.append(p) }
-        for c in urls {
-            let req = await WebSession.request(c)
+        for c in Site.mangaThumb(raw, ref: url) {
+            let req = Self.request(c)
             guard let got = await Self.get(req), case let (data, resp) = got,
                   (resp as? HTTPURLResponse)?.statusCode == 200, UIImage(data: data) != nil else { continue }
             let dest = Storage.thumbsDir.appending(path: "s_" + Storage.hash(url) + ".jpg")
@@ -501,8 +478,30 @@ final class DownloadCenter {
     }
 
     nonisolated private static func get(_ req: URLRequest) async -> (Data, URLResponse)? {
-        try? await URLSession.shared.data(for: req)
+        try? await API.shared.session.data(for: req)
     }
+
+    /// طلب يحمل كوكيز جلسة الموقع (لازم لروابط /api/stream والبروكسي).
+    nonisolated static func request(_ url: URL) -> URLRequest {
+        var r = URLRequest(url: url)
+        for (k, v) in API.shared.cookieHeader(for: url) { r.setValue(v, forHTTPHeaderField: k) }
+        r.setValue(API.userAgent, forHTTPHeaderField: "User-Agent")
+        return r
+    }
+
+    /// تحميل حلقات عمل كامل بالجودة المفضّلة (أو الأعلى).
+    func downloadAll(_ episodes: [MediaItem]) {
+        AppModel.shared.show("جاري تجهيز \(episodes.count) حلقة للتحميل…")
+        Task {
+            for ep in episodes where isDownloaded(key: ep.key) == nil {
+                guard let r = try? await API.shared.resolve(ep), let v = CapturedVideo(ep, r) else { continue }
+                let options = await qualityOptions(for: v)
+                if let pick = autoPick(options) ?? options.first { download(v, quality: pick, quiet: true) }
+            }
+        }
+    }
+
+    func isDownloaded(key: String) -> VideoDownload? { videos.first { $0.id == key } }
 
     // MARK: - الحفظ
 

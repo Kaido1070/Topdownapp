@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct DownloadsView: View {
+struct DownloadsList: View {
     @Environment(DownloadCenter.self) private var center
     @Environment(AppModel.self) private var app
 
@@ -10,55 +10,54 @@ struct DownloadsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                if activeVideos.isEmpty && activeChapters.isEmpty {
-                    ContentUnavailableView {
-                        Label("لا توجد تحميلات جارية", systemImage: "arrow.down.circle")
-                    } description: {
-                        Text("التحميلات المكتملة تجدها في المكتبة.")
-                    } actions: {
-                        Button("فتح المكتبة") { app.tab = .library }.buttonStyle(.glassProminent)
-                    }
-                    .listRowBackground(Color.clear)
-                }
-                if !activeVideos.isEmpty {
-                    Section("الفيديو") {
-                        ForEach(activeVideos) { v in VideoRow(video: v) }
-                    }
-                }
-                if !activeChapters.isEmpty {
-                    Section("القصص") {
-                        ForEach(activeChapters, id: \.1.url) { pair in
-                            let (s, c) = pair
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(s.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                    Text(c.displayTitle + (c.pageCount > 0 ? " • \(c.pageCount) صفحة" : ""))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    if c.state == .failed {
-                                        Text(c.errorMessage ?? "فشل").font(.caption).foregroundStyle(.red)
-                                    } else {
-                                        ProgressView(value: c.progress).tint(Theme.accent)
-                                    }
-                                }
-                                if c.state == .failed {
-                                    Button { center.retry(chapter: c, in: s) } label: { Image(systemName: "arrow.clockwise") }
-                                        .buttonStyle(.glass)
-                                }
-                                Button(role: .destructive) { center.cancel(chapter: c, in: s) } label: { Image(systemName: "xmark") }
-                                    .buttonStyle(.glass)
-                            }
-                        }
-                    }
-                }
-                Section("المساحة") {
-                    LabeledContent("المستخدم", value: center.storageSummary)
-                    LabeledContent("فيديوهات", value: "\(center.videos.filter { $0.state == .completed }.count)")
-                    LabeledContent("فصول", value: "\(center.stories.flatMap(\.completedChapters).count)")
+        VStack(spacing: 12) {
+            if activeVideos.isEmpty && activeChapters.isEmpty {
+                ContentUnavailableView("لا توجد تحميلات جارية", systemImage: "arrow.down.circle",
+                                       description: Text("التحميلات المكتملة تظهر في تبويب الفيديو والقصص."))
+                    .padding(.top, 40)
+            }
+            ForEach(activeVideos) { v in
+                VideoRow(video: v).padding(14).glassEffect(.regular, in: .rect(cornerRadius: 20))
+            }
+            ForEach(activeChapters, id: \.1.url) { pair in
+                ChapterProgressRow(story: pair.0, chapter: pair.1)
+                    .padding(14).glassEffect(.regular, in: .rect(cornerRadius: 20))
+            }
+            HStack {
+                Label(center.storageSummary, systemImage: "internaldrive")
+                Spacer()
+                Text("\(center.videos.filter { $0.state == .completed }.count) فيديو • \(center.stories.flatMap(\.completedChapters).count) فصل")
+            }
+            .font(.footnote).foregroundStyle(.secondary)
+            .padding(.top, 8)
+        }
+        .padding(.horizontal)
+    }
+}
+
+private struct ChapterProgressRow: View {
+    let story: StoryDownload
+    let chapter: ChapterDownload
+    @Environment(DownloadCenter.self) private var center
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(story.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text(chapter.displayTitle + (chapter.pageCount > 0 ? " • \(chapter.pageCount) صفحة" : ""))
+                    .font(.caption).foregroundStyle(.secondary)
+                if chapter.state == .failed {
+                    Text(chapter.errorMessage ?? "فشل").font(.caption).foregroundStyle(.red)
+                } else {
+                    ProgressView(value: chapter.progress).tint(Theme.accent)
                 }
             }
-            .navigationTitle("التحميلات")
+            if chapter.state == .failed {
+                Button { center.retry(chapter: chapter, in: story) } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.glass)
+            }
+            Button(role: .destructive) { center.cancel(chapter: chapter, in: story) } label: { Image(systemName: "xmark") }
+                .buttonStyle(.glass)
         }
     }
 }

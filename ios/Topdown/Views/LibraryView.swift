@@ -20,6 +20,7 @@ struct LibraryView: View {
                 Picker("", selection: $section) {
                     Text("الفيديو (\(videos.count))").tag(0)
                     Text("القصص (\(stories.count))").tag(1)
+                    Text("جارٍ (\(center.activeCount))").tag(2)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
@@ -32,13 +33,15 @@ struct LibraryView: View {
                         .padding(.top, 6)
                 }
 
-                if section == 0 {
+                if section == 2 {
+                    DownloadsList()
+                } else if section == 0 {
                     if videos.isEmpty {
-                        EmptyLibrary(icon: "film", text: "ما فيه فيديوهات محمّلة.\nافتح أي فيديو في الموقع واضغط «تحميل».")
+                        EmptyLibrary(icon: "film", text: "ما فيه فيديوهات محمّلة.\nافتح أي فيديو واضغط «تحميل».")
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 14)], spacing: 16) {
                             ForEach(videos) { v in
-                                VideoCard(video: v)
+                                OfflineVideoCard(video: v)
                                     .onTapGesture { playing = v }
                                     .contextMenu {
                                         Button("تشغيل", systemImage: "play.fill") { playing = v }
@@ -53,11 +56,11 @@ struct LibraryView: View {
                     }
                 } else {
                     if stories.isEmpty {
-                        EmptyLibrary(icon: "book", text: "ما فيه قصص محمّلة.\nافتح أي فصل في الموقع واضغط «تحميل».")
+                        EmptyLibrary(icon: "book", text: "ما فيه قصص محمّلة.\nافتح أي قصة واضغط زر التحميل.")
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 14)], spacing: 18) {
                             ForEach(stories) { s in
-                                NavigationLink(value: s.url) { StoryCard(story: s) }
+                                NavigationLink(value: s.url) { OfflineStoryCard(story: s) }
                                     .buttonStyle(.plain)
                                     .contextMenu {
                                         Button("حذف القصة", systemImage: "trash", role: .destructive) { center.remove(story: s) }
@@ -68,11 +71,11 @@ struct LibraryView: View {
                     }
                 }
             }
-            .navigationTitle("المكتبة")
+            .navigationTitle("التحميلات")
             .searchable(text: $query, prompt: "ابحث في المحمّلات")
-            .navigationDestination(for: String.self) { url in StoryDetailView(storyURL: url) }
+            .navigationDestination(for: String.self) { url in OfflineStoryView(storyURL: url) }
             .fullScreenCover(item: $playing) { v in PlayerScreen(video: v) }
-            .background(Theme.background.opacity(0.0001))
+            .onAppear { if center.activeCount > 0 && videos.isEmpty && stories.isEmpty { section = 2 } }
         }
     }
 }
@@ -110,7 +113,7 @@ struct LocalImage: View {
     }
 }
 
-struct VideoCard: View {
+struct OfflineVideoCard: View {
     let video: VideoDownload
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -145,7 +148,7 @@ struct VideoCard: View {
     }
 }
 
-struct StoryCard: View {
+struct OfflineStoryCard: View {
     let story: StoryDownload
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -164,7 +167,7 @@ struct StoryCard: View {
     }
 }
 
-struct StoryDetailView: View {
+struct OfflineStoryView: View {
     let storyURL: String
     @Environment(DownloadCenter.self) private var center
     @Environment(AppModel.self) private var app
@@ -183,7 +186,7 @@ struct StoryDetailView: View {
                             if let resume = story.sortedChapters.last(where: { $0.lastReadPage > 0 && $0.state == .completed })
                                 ?? story.completedChapters.first {
                                 NavigationLink {
-                                    ReaderView(storyURL: story.url, chapterURL: resume.url)
+                                    OfflineReaderView(storyURL: story.url, chapterURL: resume.url)
                                 } label: {
                                     Label(resume.lastReadPage > 0 ? "متابعة " + resume.displayTitle : "ابدأ القراءة",
                                           systemImage: "book.fill")
@@ -227,7 +230,7 @@ private struct ChapterRow: View {
     var body: some View {
         if chapter.state == .completed {
             NavigationLink {
-                ReaderView(storyURL: story.url, chapterURL: chapter.url)
+                OfflineReaderView(storyURL: story.url, chapterURL: chapter.url)
             } label: {
                 HStack {
                     Text(chapter.displayTitle)

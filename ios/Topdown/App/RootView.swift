@@ -2,29 +2,20 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var app
-    @Environment(DownloadCenter.self) private var center
+    @Environment(Auth.self) private var auth
 
     var body: some View {
-        @Bindable var app = app
         ZStack {
-            TabView(selection: $app.tab) {
-                Tab("الموقع", systemImage: "globe", value: AppTab.web) {
-                    BrowserView()
-                }
-                Tab("المكتبة", systemImage: "square.stack.fill", value: AppTab.library) {
-                    LibraryView()
-                }
-                Tab("التحميلات", systemImage: "arrow.down.circle", value: AppTab.downloads) {
-                    DownloadsView()
-                }
-                .badge(center.activeCount)
-                Tab("الإعدادات", systemImage: "gearshape", value: AppTab.settings) {
-                    SettingsView()
-                }
-            }
-            .tabBarMinimizeBehavior(.onScrollDown)
-            .tabViewBottomAccessory {
-                BottomAccessory()
+            Theme.background.ignoresSafeArea()
+            switch auth.state {
+            case .checking:
+                SplashView()
+            case .signedOut:
+                LoginView()
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            case .signedIn:
+                MainTabs()
+                    .transition(.opacity)
             }
 
             if let toast = app.toast {
@@ -41,64 +32,68 @@ struct RootView: View {
             }
 
             if app.isObscured || app.isLocked {
-                LockView()
-                    .transition(.opacity)
+                LockView().transition(.opacity)
             }
         }
         .animation(.smooth, value: app.isObscured)
         .animation(.smooth, value: app.isLocked)
+        .task { await auth.bootstrap() }
     }
 }
 
-/// شريط زجاجي فوق شريط التبويبات: تحكم المتصفح أو حالة التحميل.
-struct BottomAccessory: View {
+struct MainTabs: View {
     @Environment(AppModel.self) private var app
-    @Environment(WebModel.self) private var web
     @Environment(DownloadCenter.self) private var center
 
     var body: some View {
-        if app.tab == .web {
-            HStack(spacing: 4) {
-                Button { web.goBack() } label: { Image(systemName: "chevron.backward") }
-                    .disabled(!web.canGoBack)
-                Button { web.goForward() } label: { Image(systemName: "chevron.forward") }
-                    .disabled(!web.canGoForward)
-                Button { web.isLoading ? web.stop() : web.reload() } label: {
-                    Image(systemName: web.isLoading ? "xmark" : "arrow.clockwise")
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                Button { web.goHome() } label: { Image(systemName: "house") }
-                Spacer(minLength: 8)
-                if web.capturedVideo != nil || web.capturedChapter != nil {
-                    Button { web.requestDownload() } label: {
-                        Label("تحميل", systemImage: "arrow.down.circle.fill")
-                            .font(.subheadline.weight(.bold))
-                            .symbolEffect(.bounce, value: web.captureToken)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .transition(.scale.combined(with: .opacity))
-                } else if let active = center.firstActive {
-                    MiniProgress(title: active.title, progress: active.progress)
-                }
+        @Bindable var app = app
+        TabView(selection: $app.tab) {
+            Tab("استكشف", systemImage: "safari.fill", value: AppTab.explore) {
+                ExploreView()
             }
-            .buttonStyle(.borderless)
-            .font(.title3)
-            .padding(.horizontal, 14)
-            .animation(.spring, value: web.capturedVideo?.id)
-            .animation(.spring, value: web.capturedChapter?.url)
-        } else if let active = center.firstActive {
-            MiniProgress(title: active.title, progress: active.progress)
-                .padding(.horizontal, 14)
-        } else {
-            HStack {
-                Image(systemName: app.isOnline ? "wifi" : "wifi.slash")
-                Text(app.isOnline ? "متصل" : "غير متصل — تصفّح المحمّل")
-                    .font(.subheadline)
-                Spacer()
-                Text(center.storageSummary).font(.caption).foregroundStyle(.secondary)
+            Tab("التحميلات", systemImage: "arrow.down.circle.fill", value: AppTab.library) {
+                LibraryView()
             }
-            .padding(.horizontal, 16)
+            .badge(center.activeCount)
+            Tab("حسابي", systemImage: "person.crop.circle.fill", value: AppTab.account) {
+                AccountView()
+            }
+            Tab("الإعدادات", systemImage: "gearshape.fill", value: AppTab.settings) {
+                SettingsView()
+            }
+            Tab(value: AppTab.search, role: .search) {
+                SearchView()
+            }
         }
+        .tabBarMinimizeBehavior(.onScrollDown)
+        .tabViewBottomAccessory {
+            BottomAccessory()
+        }
+    }
+}
+
+/// شريط زجاجي فوق التبويبات: تقدّم التحميل أو حالة الاتصال.
+struct BottomAccessory: View {
+    @Environment(AppModel.self) private var app
+    @Environment(DownloadCenter.self) private var center
+
+    var body: some View {
+        Button { app.tab = .library } label: {
+            if let active = center.firstActive {
+                MiniProgress(title: active.title, progress: active.progress)
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: app.isOnline ? "checkmark.icloud" : "wifi.slash")
+                        .foregroundStyle(app.isOnline ? Theme.accent : .orange)
+                    Text(app.isOnline ? "متصل" : "بدون إنترنت — شاهد المحمّل")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(center.storageSummary).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
     }
 }
 
@@ -110,12 +105,35 @@ struct MiniProgress: View {
             ProgressView(value: max(progress, 0.01))
                 .progressViewStyle(.circular)
                 .controlSize(.small)
+                .tint(Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.caption.weight(.semibold)).lineLimit(1)
                 Text("\(Int(progress * 100))٪").font(.caption2).foregroundStyle(.secondary).monospacedDigit()
             }
             Spacer(minLength: 0)
+            Image(systemName: "arrow.down.circle").foregroundStyle(Theme.accent)
+                .symbolEffect(.pulse)
         }
+    }
+}
+
+struct SplashView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            BrandMark(size: 72)
+            ProgressView().tint(Theme.accent)
+        }
+    }
+}
+
+struct BrandMark: View {
+    var size: CGFloat = 44
+    var body: some View {
+        Text("T")
+            .font(.system(size: size * 0.55, weight: .semibold, design: .serif))
+            .foregroundStyle(Theme.accent)
+            .frame(width: size, height: size)
+            .glassEffect(.regular.tint(Theme.accent.opacity(0.18)), in: .rect(cornerRadius: size * 0.28))
     }
 }
 
@@ -124,15 +142,77 @@ struct LockView: View {
     var body: some View {
         ZStack {
             Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
-            if app.isLocked {
-                VStack(spacing: 18) {
-                    Image(systemName: "lock.fill").font(.system(size: 44))
+            VStack(spacing: 18) {
+                BrandMark(size: 64)
+                if app.isLocked {
                     Text("Topdown مقفل").font(.title3.bold())
-                    Button("فتح القفل") { app.unlock() }
+                    Button("فتح القفل", systemImage: "faceid") { app.unlock() }
                         .buttonStyle(.glassProminent)
                         .controlSize(.large)
                 }
             }
+        }
+    }
+}
+
+struct LoginView: View {
+    @Environment(Auth.self) private var auth
+    @State private var password = ""
+    @State private var busy = false
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Spacer()
+            BrandMark(size: 76)
+            VStack(spacing: 6) {
+                Text("Topdown").font(.largeTitle.bold())
+                Text("مساحتك الخاصة").foregroundStyle(.secondary)
+            }
+            VStack(spacing: 14) {
+                SecureField("كلمة المرور", text: $password)
+                    .textContentType(.password)
+                    .focused($focused)
+                    .submitLabel(.go)
+                    .onSubmit(submit)
+                    .padding(16)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote).foregroundStyle(.red)
+                        .transition(.opacity)
+                }
+                Button(action: submit) {
+                    Group {
+                        if busy { ProgressView() } else { Text("دخول").font(.headline) }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 30)
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.large)
+                .disabled(password.isEmpty || busy)
+                Text("تسجّل دخولك مرة واحدة فقط — التطبيق يتذكّرك.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .glassEffect(.regular, in: .rect(cornerRadius: 30))
+            .padding(.horizontal, 20)
+            Spacer()
+            Spacer()
+        }
+        .onAppear { focused = true }
+        .animation(.smooth, value: error)
+    }
+
+    private func submit() {
+        guard !password.isEmpty, !busy else { return }
+        busy = true
+        error = nil
+        Task {
+            do { try await auth.login(password) }
+            catch { self.error = error.localizedDescription; Haptics.tap() }
+            busy = false
         }
     }
 }

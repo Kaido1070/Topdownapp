@@ -2,11 +2,17 @@ import SwiftUI
 import Network
 import LocalAuthentication
 
-enum AppTab: Hashable { case web, library, downloads, settings }
+enum AppTab: Hashable { case explore, library, account, settings, search }
+enum BrowseMode: String { case anime, stories }
 
 enum Theme {
     static let accent = Color(red: 0.79, green: 0.69, blue: 0.56)
     static let background = Color(red: 0.05, green: 0.055, blue: 0.07)
+}
+
+enum Haptics {
+    @MainActor static func tap() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    @MainActor static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
 }
 
 @MainActor
@@ -14,7 +20,8 @@ enum Theme {
 final class AppModel {
     static let shared = AppModel()
 
-    var tab: AppTab = .web
+    var tab: AppTab = .explore
+    var mode: BrowseMode = .anime
     var isOnline = true
     var isLocked = false
     var isObscured = false
@@ -50,7 +57,6 @@ final class AppModel {
         }
         if online && !wasOnline {
             show("عاد الاتصال بالإنترنت")
-            WebModel.shared.reloadIfFailed()
         } else if !online && wasOnline {
             show("أنت الآن غير متصل — المحتوى المحمّل متاح في المكتبة")
         }

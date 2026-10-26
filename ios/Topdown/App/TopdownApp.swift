@@ -5,7 +5,8 @@ import UserNotifications
 struct TopdownApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var app = AppModel.shared
-    @State private var web = WebModel.shared
+    @State private var auth = Auth.shared
+    @State private var library = Library.shared
     @State private var center = DownloadCenter.shared
     @Environment(\.scenePhase) private var scenePhase
 
@@ -13,7 +14,8 @@ struct TopdownApp: App {
         WindowGroup {
             RootView()
                 .environment(app)
-                .environment(web)
+                .environment(auth)
+                .environment(library)
                 .environment(center)
                 .environment(\.layoutDirection, .rightToLeft)
                 .preferredColorScheme(app.colorScheme)
