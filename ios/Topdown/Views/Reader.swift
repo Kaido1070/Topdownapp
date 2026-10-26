@@ -38,6 +38,15 @@ struct ReaderScreen: View {
     private var next: ChapterLink? { index.flatMap { $0 + 1 < chapters.count ? chapters[$0 + 1] : nil } }
     private var local: ChapterDownload? { center.isDownloaded(chapter: url).flatMap { $0.state == .completed ? $0 : nil } }
 
+    /// «الفصل 12 · العنوان» إذا كان للفصل عنوان غير الرقم (مثل Rany)
+    private var headerTitle: String {
+        let base = current.displayTitle
+        let t = current.title.trimmingCharacters(in: .whitespaces)
+        guard current.number != nil, !t.isEmpty, t != base,
+              !t.contains(ChapterDownload.format(current.number ?? 0)) else { return base }
+        return base + " · " + t
+    }
+
     private var pages: [ReaderPageSource] {
         if let local {
             let folder = Storage.absolute(local.folder)
@@ -57,7 +66,7 @@ struct ReaderScreen: View {
                         pages: pages,
                         initialPage: initialPage,
                         endTitle: "نهاية " + current.displayTitle,
-                        nextTitle: next.map { "الفصل التالي: " + $0.displayTitle },
+                        nextTitle: next.map { n in n.number.map { "الفصل التالي " + ChapterDownload.format($0) } ?? "الفصل التالي" },
                         onNext: { if let n = next { open(n) } },
                         onBack: { dismiss() },
                         onTap: { withAnimation(.easeInOut(duration: 0.22)) { controls.toggle() } },
@@ -90,6 +99,18 @@ struct ReaderScreen: View {
 
                 Color.black.opacity(dim).ignoresSafeArea().allowsHitTesting(false)
 
+                HStack(spacing: 0) {
+                    Spacer()
+                    Color.clear
+                        .frame(width: 22)
+                        .contentShape(.rect)
+                        .gesture(DragGesture(minimumDistance: 12).onEnded { v in
+                            if v.translation.width < -70 && abs(v.translation.height) < 120 { dismiss() }
+                        })
+                }
+                .environment(\.layoutDirection, .leftToRight)
+                .ignoresSafeArea()
+
                 header(top: screen.safeAreaInsets.top)
                     .offset(y: controls ? 0 : -(headerHeight + 12))
                     .opacity(controls ? 1 : 0)
@@ -119,19 +140,15 @@ struct ReaderScreen: View {
                 .accessibilityLabel("العودة")
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(current.displayTitle).font(.subheadline.bold()).lineLimit(1).minimumScaleFactor(0.8)
-                    HStack(spacing: 6) {
-                        if !pages.isEmpty {
-                            Text("\(page + 1) / \(pages.count)").monospacedDigit()
-                            Text("•")
-                        }
-                        Text(request.story.title).lineLimit(1)
+                    Text(headerTitle).font(.subheadline.bold()).lineLimit(1).minimumScaleFactor(0.8)
+                    if ready, !pages.isEmpty {
+                        Text("\(page + 1) / \(pages.count)").monospacedDigit()
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
 
-                Menu {
+                if ready { Menu {
                     if local == nil {
                         Button(center.isDownloaded(chapter: url) == nil ? "تحميل الفصل" : "جارٍ التحميل…",
                                systemImage: "arrow.down.circle") { downloadCurrent() }
@@ -160,7 +177,7 @@ struct ReaderScreen: View {
                 } label: {
                     Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44).contentShape(.rect)
                 }
-                .accessibilityLabel("الخيارات")
+                .accessibilityLabel("الخيارات") }
             }
 
             HStack(spacing: 0) {
