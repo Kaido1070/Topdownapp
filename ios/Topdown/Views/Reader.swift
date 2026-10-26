@@ -222,12 +222,15 @@ struct ReaderScreen: View {
 
     private var bottomBar: some View {
         VStack(spacing: 12) {
+            // عربي: السابق يمين والتالي يسار، والصفحة الأولى من اليمين
             HStack(spacing: 10) {
                 Button { if let p = previous { go(to: p) } } label: {
-                    Image(systemName: "chevron.backward.2").frame(width: 36, height: 36)
+                    Image(systemName: "chevron.right.2").frame(width: 36, height: 36)
                 }
                 .buttonStyle(.glass).buttonBorderShape(.circle)
                 .disabled(previous == nil)
+                .opacity(previous == nil ? 0.3 : 1)
+                .accessibilityLabel("الفصل السابق")
 
                 Slider(value: $sliderValue, in: 0...Double(max(pages.count - 1, 1)), step: 1,
                        onEditingChanged: { editing in
@@ -237,10 +240,12 @@ struct ReaderScreen: View {
                 .tint(Theme.accent)
 
                 Button { if let n = next { go(to: n) } } label: {
-                    Image(systemName: "chevron.forward.2").frame(width: 36, height: 36)
+                    Image(systemName: "chevron.left.2").frame(width: 36, height: 36)
                 }
                 .buttonStyle(.glass).buttonBorderShape(.circle)
                 .disabled(next == nil)
+                .opacity(next == nil ? 0.3 : 1)
+                .accessibilityLabel("الفصل التالي")
             }
 
             HStack {
