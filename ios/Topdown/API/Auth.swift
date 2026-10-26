@@ -11,6 +11,17 @@ final class Auth {
     private init() {}
 
     func bootstrap() async {
+        #if DEBUG
+        let defaults = UserDefaults.standard
+        if let pw = defaults.string(forKey: "smokePassword"), !pw.isEmpty, Keychain.password == nil {
+            try? await API.shared.login(password: pw)
+        }
+        switch defaults.string(forKey: "smokeTab") {
+        case "stories": AppModel.shared.mode = .stories
+        case "account": AppModel.shared.tab = .account
+        default: break
+        }
+        #endif
         // بدون إنترنت: إذا كانت هناك جلسة محفوظة ندخل مباشرة (المكتبة تعمل بدون اتصال)
         if !AppModel.shared.isOnline {
             state = (API.shared.hasSessionCookie || Keychain.password != nil) ? .signedIn : .signedOut

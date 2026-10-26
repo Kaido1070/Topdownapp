@@ -62,3 +62,46 @@ jobs:
           make_latest: false
           files: Topdown-unsigned.ipa
           body: "نسخة غير موقّعة من تطبيق Topdown للآيفون. وقّعها بأداتك قبل التثبيت."
+
+  simulator-smoke:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Build for simulator
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate && cd ..
+          xcodebuild -project ios/Topdown.xcodeproj -scheme Topdown -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build-sim \
+            CODE_SIGNING_ALLOWED=NO build > sim.log 2>&1 || { grep -E "error:" -A3 sim.log | head -200; exit 1; }
+      - name: Launch and screenshot
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys;d=json.load(sys.stdin)['devices'];print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          echo "Device $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build-sim/Build/Products/Debug-iphonesimulator/Topdown.app
+          mkdir -p shots
+          xcrun simctl launch "$UDID" com.topdown.app
+          sleep 12
+          xcrun simctl io "$UDID" screenshot shots/01-launch.png
+          if [ -n "${TOPDOWN_PASSWORD}" ]; then
+            xcrun simctl terminate "$UDID" com.topdown.app
+            xcrun simctl launch "$UDID" com.topdown.app -smokePassword "${TOPDOWN_PASSWORD}"
+            sleep 25; xcrun simctl io "$UDID" screenshot shots/02-explore.png
+            xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app -smokeTab stories
+            sleep 20; xcrun simctl io "$UDID" screenshot shots/03-stories.png
+            xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app -smokeTab account
+            sleep 15; xcrun simctl io "$UDID" screenshot shots/04-account.png
+          fi
+          pgrep -fl Topdown.app || { echo "APP NOT RUNNING (crash?)"; xcrun simctl spawn "$UDID" log show --last 2m --predicate 'process == "Topdown"' | tail -80; exit 1; }
+        env:
+          TOPDOWN_PASSWORD: ${{ secrets.TOPDOWN_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-screenshots
+          path: shots/
