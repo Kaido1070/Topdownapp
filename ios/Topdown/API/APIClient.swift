@@ -349,23 +349,43 @@ enum Keychain {
         set { write("session-token", newValue) }
     }
 
+    // نسخة في الذاكرة + بديل في UserDefaults إذا رفض Keychain الحفظ
+    // (يحدث مع بعض أدوات إعادة التوقيع ومع المحاكي بدون توقيع).
+    private static var memory: [String: String] = [:]
+    private static let lock = NSLock()
+
     private static func read(_ account: String) -> String? {
+        if let v = lock.withLock({ memory[account] }) { return v }
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                 kSecAttrAccount as String: account, kSecReturnData as String: true,
                                 kSecMatchLimit as String: kSecMatchLimitOne]
         var out: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
+        var value: String?
+        if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data {
+            value = String(data: d, encoding: .utf8)
+        } else {
+            value = UserDefaults.standard.string(forKey: "kc." + account)
+        }
+        if let value { lock.withLock { memory[account] = value } }
+        return value
     }
 
     private static func write(_ account: String, _ value: String?) {
+        lock.withLock { memory[account] = value }
         let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                    kSecAttrAccount as String: account]
         SecItemDelete(base as CFDictionary)
-        guard let value, let data = value.data(using: .utf8) else { return }
+        guard let value, let data = value.data(using: .utf8) else {
+            UserDefaults.standard.removeObject(forKey: "kc." + account)
+            return
+        }
         var add = base
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
+        if SecItemAdd(add as CFDictionary, nil) == errSecSuccess {
+            UserDefaults.standard.removeObject(forKey: "kc." + account)
+        } else {
+            UserDefaults.standard.set(value, forKey: "kc." + account)
+        }
     }
 }

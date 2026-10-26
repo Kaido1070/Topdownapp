@@ -120,7 +120,7 @@ jobs:
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab account
           sleep 15; xcrun simctl io "$UDID" screenshot shots/04-account.png
           pgrep -fl Topdown.app || { echo "APP NOT RUNNING (crash?)"; exit 1; }
-          grep -E "GET /api|POST /api" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | tail -40
+          grep -E "GET /api|POST /api" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | sed -E 's/\?.*( [0-9]{3} )/\1/' | sort | uniq -c | sort -rn | head -40
 
       - uses: actions/upload-artifact@v4
         if: always()
