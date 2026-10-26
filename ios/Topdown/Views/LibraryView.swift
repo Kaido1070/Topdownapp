@@ -185,9 +185,7 @@ struct OfflineStoryView: View {
                             Text("\(story.completedChapters.count) فصل محمّل").foregroundStyle(.secondary)
                             if let resume = story.sortedChapters.last(where: { $0.lastReadPage > 0 && $0.state == .completed })
                                 ?? story.completedChapters.first {
-                                NavigationLink {
-                                    OfflineReaderView(storyURL: story.url, chapterURL: resume.url)
-                                } label: {
+                                Button { openReader(story, resume.url) } label: {
                                     Label(resume.lastReadPage > 0 ? "متابعة " + resume.displayTitle : "ابدأ القراءة",
                                           systemImage: "book.fill")
                                 }
@@ -229,9 +227,7 @@ private struct ChapterRow: View {
 
     var body: some View {
         if chapter.state == .completed {
-            NavigationLink {
-                OfflineReaderView(storyURL: story.url, chapterURL: chapter.url)
-            } label: {
+            Button { openReader(story, chapter.url) } label: {
                 HStack {
                     Text(chapter.displayTitle)
                     Spacer()
@@ -254,4 +250,10 @@ private struct ChapterRow: View {
             }
         }
     }
+}
+
+@MainActor
+func openReader(_ story: StoryDownload, _ url: String) {
+    let chapters = story.completedChapters.map { ChapterLink(url: $0.url, title: $0.title, number: $0.number) }
+    AppModel.shared.reader = ReaderRequest(story: StoryItem(title: story.title, url: story.url), chapters: chapters, url: url, recordHistory: false)
 }

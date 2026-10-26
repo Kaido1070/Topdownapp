@@ -119,6 +119,8 @@ jobs:
           sleep 40; xcrun simctl io "$UDID" screenshot shots/03-stories.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab switchStories
           sleep 40; xcrun simctl io "$UDID" screenshot shots/05-switch-stories.png
+          xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab reader
+          sleep 35; xcrun simctl io "$UDID" screenshot shots/06-reader.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab account
           sleep 15; xcrun simctl io "$UDID" screenshot shots/04-account.png
           pgrep -fl Topdown.app || { echo "APP NOT RUNNING (crash?)"; exit 1; }

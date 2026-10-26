@@ -5,6 +5,7 @@ struct StoryScreen: View {
     let item: StoryItem
     @Environment(Library.self) private var library
     @Environment(DownloadCenter.self) private var center
+    @Environment(AppModel.self) private var app
     @State private var detail: StoryDetail?
     @State private var error: String?
     @State private var query = ""
@@ -60,18 +61,18 @@ struct StoryScreen: View {
                     GlassEffectContainer(spacing: 10) {
                         HStack(spacing: 10) {
                             if let last = lastRead {
-                                NavigationLink(value: Route.reader(story, reading, last.url)) {
+                                Button { open(last.url) } label: {
                                     Label("متابعة " + last.displayTitle, systemImage: "book.fill").frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.glassProminent)
                             } else if let first = reading.first {
-                                NavigationLink(value: Route.reader(story, reading, first.url)) {
+                                Button { open(first.url) } label: {
                                     Label("ابدأ القراءة", systemImage: "book.fill").frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.glassProminent)
                             }
                             if let latest = reading.last, latest.url != lastRead?.url {
-                                NavigationLink(value: Route.reader(story, reading, latest.url)) {
+                                Button { open(latest.url) } label: {
                                     Label("الأحدث", systemImage: "sparkles").frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.glass)
@@ -95,7 +96,7 @@ struct StoryScreen: View {
             if !chapters.isEmpty {
                 Section {
                     ForEach(shown) { c in
-                        NavigationLink(value: Route.reader(story, reading, c.url)) {
+                        Button { open(c.url) } label: {
                             HStack(spacing: 12) {
                                 Text(c.number.map { ChapterDownload.format($0) } ?? "—")
                                     .font(.headline.monospacedDigit()).foregroundStyle(Theme.accent)
@@ -109,7 +110,9 @@ struct StoryScreen: View {
                                     Text(p).font(.caption2).foregroundStyle(.secondary)
                                 }
                             }
+                            .contentShape(.rect)
                         }
+                        .buttonStyle(.plain)
                         .swipeActions {
                             Button("تحميل", systemImage: "arrow.down") { center.download(chapters: [c], of: captured) }
                                 .tint(Theme.accent)
@@ -154,6 +157,11 @@ struct StoryScreen: View {
         .refreshable { await load() }
     }
 
+    private func open(_ url: String) {
+        Haptics.tap()
+        app.reader = ReaderRequest(story: story, chapters: reading, url: url)
+    }
+
     private func load() async {
         error = nil
         do { detail = try await API.shared.story(item.url) }
@@ -169,136 +177,3 @@ struct StoryScreen: View {
     }
 }
 
-/// قارئ الفصول: يقرأ من التحميلات إن وُجدت، وإلا من الإنترنت مع بدائل الصور مثل الموقع.
-struct ReaderScreen: View {
-    let story: StoryItem
-    let chapters: [ChapterLink]
-    @State private var url: String
-    @Environment(Library.self) private var library
-    @Environment(DownloadCenter.self) private var center
-    @State private var images: [String] = []
-    @State private var error: String?
-    @State private var chromeHidden = false
-    @State private var page = 0
-
-    init(story: StoryItem, chapters: [ChapterLink], startURL: String) {
-        self.story = story
-        self.chapters = chapters
-        _url = State(initialValue: startURL)
-    }
-
-    private var index: Int? { chapters.firstIndex { $0.url == url } }
-    private var current: ChapterLink { index.map { chapters[$0] } ?? ChapterLink(url: url, title: "") }
-    private var previous: ChapterLink? { index.flatMap { $0 > 0 ? chapters[$0 - 1] : nil } }
-    private var next: ChapterLink? { index.flatMap { $0 + 1 < chapters.count ? chapters[$0 + 1] : nil } }
-    private var local: ChapterDownload? { center.isDownloaded(chapter: url).flatMap { $0.state == .completed ? $0 : nil } }
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    Color.clear.frame(height: 1).id("top")
-                    if let local {
-                        ForEach(Array(local.pages.enumerated()), id: \.offset) { i, name in
-                            LocalPage(url: Storage.absolute(local.folder).appending(path: name))
-                                .onAppear { page = i }
-                        }
-                    } else if !images.isEmpty {
-                        ForEach(Array(images.enumerated()), id: \.offset) { i, src in
-                            RemoteImage(urls: Site.mangaPage(src, chapter: url), maxPixel: 1800, contentMode: .fit)
-                                .frame(minHeight: 300)
-                                .onAppear { page = i }
-                        }
-                    } else if let error {
-                        ContentUnavailableView {
-                            Label("تعذّر فتح الفصل", systemImage: "exclamationmark.triangle")
-                        } description: { Text(error) } actions: {
-                            Button("إعادة المحاولة") { Task { await load() } }.buttonStyle(.glassProminent)
-                        }
-                        .padding(.top, 120)
-                    } else {
-                        ProgressView().controlSize(.large).padding(.top, 200)
-                    }
-                    footer.padding(.vertical, 40)
-                }
-            }
-            .background(.black)
-            .scrollIndicators(.hidden)
-            .onTapGesture { withAnimation(.smooth) { chromeHidden.toggle() } }
-            .onChange(of: url) { _, _ in proxy.scrollTo("top", anchor: .top) }
-        }
-        .ignoresSafeArea(edges: .bottom)
-        .navigationTitle(current.displayTitle)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(chromeHidden ? .hidden : .visible, for: .navigationBar, .tabBar)
-        .statusBarHidden(chromeHidden)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if local == nil {
-                    Button {
-                        center.download(chapters: [current], of: CapturedStory(title: story.title, url: story.url, cover: story.cover, chapters: chapters),
-                                        current: CapturedChapter(url: url, title: current.title, images: images))
-                    } label: { Image(systemName: center.isDownloaded(chapter: url) == nil ? "arrow.down.circle" : "arrow.down.circle.dotted") }
-                } else {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
-                }
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if !chromeHidden {
-                let count = local?.pages.count ?? images.count
-                if count > 0 {
-                    Text("\(page + 1) / \(count)")
-                        .font(.caption.monospacedDigit().bold())
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .glassEffect(.regular, in: .capsule)
-                        .padding(.bottom, 30)
-                }
-            }
-        }
-        .task(id: url) { await load() }
-    }
-
-    private var footer: some View {
-        VStack(spacing: 14) {
-            Text("نهاية " + current.displayTitle).foregroundStyle(.secondary)
-            GlassEffectContainer(spacing: 12) {
-                HStack(spacing: 12) {
-                    Button("السابق", systemImage: "chevron.backward") { if let p = previous { url = p.url } }
-                        .buttonStyle(.glass).disabled(previous == nil)
-                    Button("التالي", systemImage: "chevron.forward") { if let n = next { url = n.url } }
-                        .buttonStyle(.glassProminent).disabled(next == nil)
-                }
-                .controlSize(.large)
-            }
-        }
-    }
-
-    private func load() async {
-        error = nil
-        images = []
-        page = 0
-        library.recordRead(story, chapter: current)
-        if let local {
-            center.saveReadingPosition(story: story.url, chapter: local.url, page: 0)
-            return
-        }
-        do { images = try await API.shared.chapter(url).images }
-        catch { self.error = error.localizedDescription }
-    }
-}
-
-private struct LocalPage: View {
-    let url: URL
-    @State private var image: UIImage?
-    var body: some View {
-        Group {
-            if let image { Image(uiImage: image).resizable().aspectRatio(contentMode: .fit) }
-            else { Color.black.frame(height: 400).overlay(ProgressView()) }
-        }
-        .frame(maxWidth: .infinity)
-        .task(id: url) {
-            image = await Task.detached { UIImage(contentsOfFile: url.path())?.preparingForDisplay() }.value
-        }
-    }
-}

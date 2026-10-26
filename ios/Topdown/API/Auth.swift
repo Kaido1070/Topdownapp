@@ -19,6 +19,15 @@ final class Auth {
         switch defaults.string(forKey: "smokeTab") {
         case "stories": AppModel.shared.mode = .stories
         case "account": AppModel.shared.tab = .account
+        case "reader":
+            Task {
+                guard let page = try? await API.shared.stories(page: 1, q: "", genre: "", source: .legacy),
+                      let first = page.items.values.first,
+                      let detail = try? await API.shared.story(first.url) else { return }
+                let chapters = detail.chapters.values.sorted { ($0.number ?? 0) < ($1.number ?? 0) }
+                guard let c = chapters.first else { return }
+                AppModel.shared.reader = ReaderRequest(story: first, chapters: chapters, url: c.url)
+            }
         case "switchStories":
             Task { try? await Task.sleep(for: .seconds(8)); withAnimation(.smooth) { AppModel.shared.mode = .stories } }
         default: break

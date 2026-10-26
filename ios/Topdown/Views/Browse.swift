@@ -4,7 +4,6 @@ enum Route: Hashable {
     case video(MediaItem)
     case work(MediaItem)
     case story(StoryItem)
-    case reader(StoryItem, [ChapterLink], String)
     case favorites, history, savedStories, storyHistory, sources
 }
 
@@ -15,7 +14,6 @@ extension View {
             case .video(let item): VideoScreen(item: item)
             case .work(let item): WorkScreen(item: item)
             case .story(let item): StoryScreen(item: item)
-            case .reader(let story, let chapters, let url): ReaderScreen(story: story, chapters: chapters, startURL: url)
             case .favorites: FavoritesScreen()
             case .history: HistoryScreen()
             case .savedStories: SavedStoriesScreen()

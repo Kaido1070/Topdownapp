@@ -26,6 +26,8 @@ final class AppModel {
     var isLocked = false
     var isObscured = false
     var toast: String?
+    /// القارئ يُعرض بملء الشاشة فوق كل شيء (بدون شريط التبويبات)
+    var reader: ReaderRequest?
 
     @ObservationIgnored @AppStorage("appLock") var appLockEnabled = false
     @ObservationIgnored @AppStorage("privacyBlur") var privacyBlur = true
@@ -92,4 +94,13 @@ final class AppModel {
             if toast == message { withAnimation(.spring) { toast = nil } }
         }
     }
+}
+
+struct ReaderRequest: Identifiable {
+    let id = UUID()
+    let story: StoryItem
+    let chapters: [ChapterLink]
+    let url: String
+    /// نسجّل القراءة في حساب الموقع (لا نفعل ذلك للقصص المفتوحة من التحميلات بدون اتصال)
+    var recordHistory = true
 }

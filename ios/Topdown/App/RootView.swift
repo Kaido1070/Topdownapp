@@ -69,6 +69,9 @@ struct MainTabs: View {
         .tabViewBottomAccessory {
             BottomAccessory()
         }
+        .fullScreenCover(item: $app.reader) { req in
+            ReaderScreen(request: req)
+        }
     }
 }
 
