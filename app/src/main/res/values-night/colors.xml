@@ -1,0 +1,9 @@
+<resources>
+    <color name="bg">#0E0F14</color>
+    <color name="on_bg">#F2F3F7</color>
+    <color name="on_bg_muted">#9A9EB0</color>
+    <color name="glass_fill">#991C1E26</color>
+    <color name="glass_fill_strong">#E61C1E26</color>
+    <color name="glass_stroke">#33FFFFFF</color>
+    <color name="glass_shadow">#66000000</color>
+</resources>

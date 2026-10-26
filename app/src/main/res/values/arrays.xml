@@ -1,0 +1,30 @@
+<resources>
+    <string-array name="quality_labels">
+        <item>اسأل كل مرة</item>
+        <item>الأعلى جودة</item>
+        <item>1080p</item>
+        <item>720p</item>
+        <item>480p</item>
+        <item>360p</item>
+        <item>الأقل حجمًا</item>
+    </string-array>
+    <string-array name="quality_values">
+        <item>ask</item>
+        <item>best</item>
+        <item>1080</item>
+        <item>720</item>
+        <item>480</item>
+        <item>360</item>
+        <item>smallest</item>
+    </string-array>
+    <string-array name="theme_labels">
+        <item>حسب النظام</item>
+        <item>فاتح</item>
+        <item>داكن</item>
+    </string-array>
+    <string-array name="theme_values">
+        <item>system</item>
+        <item>light</item>
+        <item>dark</item>
+    </string-array>
+</resources>

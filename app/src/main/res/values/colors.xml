@@ -1,0 +1,13 @@
+<resources>
+    <color name="brand">#6C5CE7</color>
+    <color name="brand_2">#00D2FF</color>
+    <color name="bg">#F3F4FA</color>
+    <color name="on_bg">#14151A</color>
+    <color name="on_bg_muted">#6B6F80</color>
+    <color name="glass_fill">#B3FFFFFF</color>
+    <color name="glass_fill_strong">#E6FFFFFF</color>
+    <color name="glass_stroke">#66FFFFFF</color>
+    <color name="glass_shadow">#1A000000</color>
+    <color name="danger">#E5484D</color>
+    <color name="success">#30A46C</color>
+</resources>

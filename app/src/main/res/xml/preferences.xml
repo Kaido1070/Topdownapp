@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="التحميل">
+        <ListPreference
+            app:defaultValue="ask"
+            app:entries="@array/quality_labels"
+            app:entryValues="@array/quality_values"
+            app:key="quality"
+            app:title="الجودة المفضّلة"
+            app:useSimpleSummaryProvider="true" />
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="wifi_only"
+            app:summary="لا تبدأ التحميل إلا عند الاتصال بـ Wi‑Fi"
+            app:title="التحميل عبر Wi‑Fi فقط" />
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:key="detect_media"
+            app:summary="إظهار زر التحميل عند وجود فيديو أو صوت في الصفحة"
+            app:title="اكتشاف الوسائط تلقائيًا" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="التصفّح">
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:key="pull_refresh"
+            app:title="السحب لإعادة التحميل" />
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:key="auto_hide_dock"
+            app:summary="إخفاء الشريط السفلي أثناء التمرير للأسفل"
+            app:title="إخفاء الشريط تلقائيًا" />
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:key="external_links"
+            app:summary="فتح روابط المواقع الأخرى في المتصفح الخارجي"
+            app:title="الروابط الخارجية في المتصفح" />
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="desktop_mode"
+            app:title="وضع سطح المكتب" />
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="keep_screen_on"
+            app:title="إبقاء الشاشة مضاءة" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="المظهر">
+        <ListPreference
+            app:defaultValue="system"
+            app:entries="@array/theme_labels"
+            app:entryValues="@array/theme_values"
+            app:key="theme"
+            app:title="السمة"
+            app:useSimpleSummaryProvider="true" />
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:key="force_dark_web"
+            app:summary="تطبيق الوضع الداكن على صفحات الموقع"
+            app:title="تعتيم الموقع" />
+        <SeekBarPreference
+            android:max="150"
+            app:defaultValue="100"
+            app:key="text_zoom"
+            app:min="70"
+            app:showSeekBarValue="true"
+            app:title="حجم النص %" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="البيانات">
+        <Preference
+            app:key="clear_cache"
+            app:summary="حذف الملفات المؤقتة للموقع"
+            app:title="مسح ذاكرة التخزين المؤقت" />
+        <Preference
+            app:key="clear_cookies"
+            app:summary="سيتم تسجيل خروجك من الموقع"
+            app:title="مسح الكوكيز وبيانات الدخول" />
+        <Preference
+            app:key="version"
+            app:selectable="false"
+            app:title="الإصدار" />
+    </PreferenceCategory>
+</PreferenceScreen>
