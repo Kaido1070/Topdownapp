@@ -1,0 +1,65 @@
+name: Topdown
+options:
+  bundleIdPrefix: com.topdown
+  deploymentTarget:
+    iOS: "26.0"
+  developmentLanguage: ar
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGN_IDENTITY: ""
+targets:
+  Topdown:
+    type: application
+    platform: iOS
+    sources:
+      - path: Topdown
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.topdown.app
+        PRODUCT_NAME: Topdown
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Topdown/Info.plist
+    info:
+      path: Topdown/Info.plist
+      properties:
+        CFBundleDisplayName: Topdown
+        CFBundleDevelopmentRegion: ar
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: AccentColor
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes:
+          - audio
+          - fetch
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.topdown.app.refresh
+        NSFaceIDUsageDescription: يُستخدم Face ID لقفل التطبيق وحماية خصوصيتك.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        ITSAppUsesNonExemptEncryption: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsArbitraryLoadsInWebContent: true

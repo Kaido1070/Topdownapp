@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val topdownUrl: String = (project.findProperty("TOPDOWN_URL") as String?) ?: "https://topdown.example.com/"
+val topdownUrl: String = (project.findProperty("TOPDOWN_URL") as String?) ?: "https://topdownn.pages.dev/"
 
 android {
     namespace = "com.topdown.app"

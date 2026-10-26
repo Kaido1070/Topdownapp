@@ -7,3 +7,10 @@ captures/
 *.keystore
 !debug.keystore
 .kotlin/
+
+# iOS
+*.xcodeproj/
+ios/Topdown/Info.plist
+build/
+Payload/
+*.ipa
