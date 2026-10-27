@@ -55,7 +55,7 @@ struct SettingsView: View {
                     Button("حذف كل التحميلات", role: .destructive) { confirmDelete = true }
                 }
                 Section {
-                    LabeledContent("الإصدار", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                    LabeledContent("الإصدار", value: AppVersion.full)
                 } footer: {
                     Text("المحمّلات تبقى على جهازك وتشتغل بدون إنترنت، وتظهر أيضًا في تطبيق «الملفات» داخل مجلد Topdown.")
                 }

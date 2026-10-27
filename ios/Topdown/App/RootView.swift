@@ -37,7 +37,16 @@ struct RootView: View {
         }
         .animation(.smooth, value: app.isObscured)
         .animation(.smooth, value: app.isLocked)
-        .task { await auth.bootstrap() }
+        .task {
+            await auth.bootstrap()
+            // تأكيد مرئي أن التحديث تثبّت فعلًا
+            let key = "lastLaunchedVersion"
+            let previous = UserDefaults.standard.string(forKey: key)
+            if previous != AppVersion.full {
+                UserDefaults.standard.set(AppVersion.full, forKey: key)
+                if previous != nil { app.show("تم التحديث إلى الإصدار " + AppVersion.full) }
+            }
+        }
     }
 }
 
@@ -202,6 +211,7 @@ struct LoginView: View {
             .glassEffect(.regular, in: .rect(cornerRadius: 30))
             .padding(.horizontal, 20)
             Spacer()
+            Text("الإصدار " + AppVersion.full).font(.caption2).foregroundStyle(.tertiary)
             Spacer()
         }
         .onAppear { focused = true }

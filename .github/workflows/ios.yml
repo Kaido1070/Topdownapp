@@ -32,6 +32,7 @@ jobs:
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             build > build.log 2>&1 || { grep -E "error:" -A3 build.log | head -300; exit 1; }
           grep -E "BUILD SUCCEEDED" build.log
           test -f build/Build/Products/Release-iphoneos/Topdown.app/Topdown
@@ -45,7 +46,13 @@ jobs:
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/Topdown.app Payload/
           zip -qry Topdown-unsigned.ipa Payload
-          ls -lh Topdown-unsigned.ipa
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Payload/Topdown.app/Info.plist)
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" Payload/Topdown.app/Info.plist)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          cp Topdown-unsigned.ipa "Topdown-$VERSION-$BUILD.ipa"
+          echo "Version $VERSION ($BUILD)"
+          ls -lh *.ipa
 
       - uses: actions/upload-artifact@v4
         with:
@@ -57,11 +64,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ios-latest
-          name: Topdown iOS (latest build)
+          name: Topdown iOS ${{ env.VERSION }} (${{ env.BUILD }})
           prerelease: true
           make_latest: false
-          files: Topdown-unsigned.ipa
-          body: "نسخة غير موقّعة من تطبيق Topdown للآيفون. وقّعها بأداتك قبل التثبيت."
+          files: |
+            Topdown-unsigned.ipa
+            Topdown-${{ env.VERSION }}-${{ env.BUILD }}.ipa
+          body: "نسخة غير موقّعة من تطبيق Topdown للآيفون — الإصدار ${{ env.VERSION }} (بناء ${{ env.BUILD }}). وقّعها بأداتك قبل التثبيت."
 
   simulator-smoke:
     runs-on: macos-26
@@ -75,6 +84,7 @@ jobs:
           brew install xcodegen
           cd ios && xcodegen generate && cd ..
           xcodebuild -project ios/Topdown.xcodeproj -scheme Topdown -configuration Debug \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build-sim \
             CODE_SIGNING_ALLOWED=NO build > sim.log 2>&1 || { grep -E "error:" -A3 sim.log | head -200; exit 1; }
       - name: Start local Topdown backend

@@ -104,3 +104,10 @@ struct ReaderRequest: Identifiable {
     /// نسجّل القراءة في حساب الموقع (لا نفعل ذلك للقصص المفتوحة من التحميلات بدون اتصال)
     var recordHistory = true
 }
+
+enum AppVersion {
+    static var short: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?" }
+    static var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?" }
+    /// مثل «1.3.0 (52)» حتى تتأكد أي نسخة مثبّتة
+    static var full: String { "\(short) (\(build))" }
+}
