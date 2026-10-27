@@ -152,19 +152,45 @@ final class StoryFeed {
 
     /// آخر حالة لكل مصدر (عدد النتائج أو الخطأ) لعرضها للمستخدم.
     private(set) var sourceStatus: [StorySource: String] = [:]
-    /// هل اكتمل تحميل واحد على الأقل؟ (لا نعرض «لا توجد نتائج» قبله)
+    /// اكتمل تحميل ورد فيه كل مصدر بنتيجة أو خطأ (لا نعرض «لا توجد نتائج» قبله)
     private(set) var didLoad = false
+
+    /// التحميل يملكه الكتالوج نفسه وليس الشاشة، فلا تلغيه SwiftUI عند إعادة بناء الواجهة.
+    @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var autoRetries = 0
 
     func loadGenres() async {
         if genres.isEmpty, let g = try? await API.shared.storyGenres() { genres = g }
+    }
+
+    /// يبدأ التحميل إن لم يكن هناك محتوى ولا تحميل جارٍ. آمن للاستدعاء مرات كثيرة.
+    func start() {
+        guard items.isEmpty, !loading, task == nil else { return }
+        refresh()
+    }
+
+    /// تحميل جديد من الصفحة الأولى (يلغي أي تحميل سابق).
+    func refresh() {
+        task?.cancel()
+        autoRetries = 0
+        task = Task { [weak self] in
+            await self?.reload()
+            self?.task = nil
+        }
+    }
+
+    /// للسحب للتحديث: ينتظر انتهاء التحميل بدون أن يرتبط إلغاؤه بالواجهة.
+    func refreshAndWait() async {
+        refresh()
+        await task?.value
     }
 
     func reload() async {
         generation += 1
         page = 1
         exhausted = []
-        items = []
         sourceStatus = [:]
+        didLoad = false
         await fetch(page: 1, append: false)
     }
 
@@ -184,6 +210,8 @@ final class StoryFeed {
         let base = append ? items : []
         var groups: [StorySource: [StoryItem]] = [:]
         var anyNext = false
+        var answered = 0
+        var replaced = append
 
         // نعرض نتائج كل مصدر فور وصولها بدل انتظار أبطأ مصدر
         await withTaskGroup(of: (StorySource, Result<StoryPage, Error>).self) { group in
@@ -194,7 +222,8 @@ final class StoryFeed {
                 }
             }
             for await (s, result) in group {
-                guard gen == generation else { continue }
+                guard gen == generation, !Task.isCancelled else { continue }
+                answered += 1
                 switch result {
                 case .success(let pg):
                     let list = pg.items.values
@@ -202,19 +231,31 @@ final class StoryFeed {
                     sourceStatus[s] = "\(list.count)"
                     if pg.nextPage == nil { exhausted.insert(s) } else { anyNext = true }
                 case .failure(let e):
-                    if (e as? URLError)?.code == .cancelled || e is CancellationError { continue }
-                    if !append { errors.append("\(s.name): \(e.localizedDescription)") }
+                    let cancelled = (e as? URLError)?.code == .cancelled || e is CancellationError
+                    if !append { errors.append("\(s.name): " + (cancelled ? "انقطع الطلب" : e.localizedDescription)) }
                     sourceStatus[s] = "خطأ"
-                    exhausted.insert(s)
+                    if !cancelled { exhausted.insert(s) }
                 }
                 var seen = Set(base.map(\.url))
                 let merged = interleave(targets.compactMap { groups[$0] }).filter { seen.insert($0.url).inserted }
-                items = base + merged
+                // نُبقي القائمة السابقة حتى تصل أول نتيجة فعلية، فلا تفرغ الشاشة أثناء التحديث
+                if !merged.isEmpty || replaced || answered == targets.count {
+                    items = base + merged
+                    replaced = true
+                }
             }
         }
-        guard gen == generation else { return }
+        guard gen == generation, !Task.isCancelled else { return }
         page = p
         hasNext = anyNext
-        if !Task.isCancelled { didLoad = true }
+        didLoad = true
+        // لم يصل شيء لأن الطلبات انقطعت: نعيد المحاولة تلقائيًا مرتين
+        if !append, items.isEmpty, groups.isEmpty, autoRetries < 2 {
+            autoRetries += 1
+            didLoad = false
+            try? await Task.sleep(for: .milliseconds(600))
+            guard gen == generation, !Task.isCancelled else { return }
+            await reload()
+        }
     }
 }

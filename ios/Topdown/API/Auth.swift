@@ -28,6 +28,20 @@ final class Auth {
                 guard let c = chapters.first else { return }
                 AppModel.shared.reader = ReaderRequest(story: first, chapters: chapters, url: c.url)
             }
+        case "tabHop":
+            // تبديل سريع بين التبويبات أثناء تحميل القصص (يحاكي استخدامًا حقيقيًا)
+            Task {
+                try? await Task.sleep(for: .seconds(6))
+                AppModel.shared.mode = .stories
+                try? await Task.sleep(for: .milliseconds(150))
+                AppModel.shared.tab = .library
+                try? await Task.sleep(for: .milliseconds(300))
+                AppModel.shared.tab = .explore
+                try? await Task.sleep(for: .milliseconds(200))
+                AppModel.shared.mode = .anime
+                try? await Task.sleep(for: .milliseconds(200))
+                AppModel.shared.mode = .stories
+            }
         case "switchStories":
             Task { try? await Task.sleep(for: .seconds(8)); withAnimation(.smooth) { AppModel.shared.mode = .stories } }
         default: break

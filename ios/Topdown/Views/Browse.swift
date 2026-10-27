@@ -91,14 +91,15 @@ struct ExploreView: View {
             }
             .navigationTitle("استكشف")
             .refreshable {
-                if app.mode == .anime { await anime.reload() } else { await stories.reload() }
+                if app.mode == .anime { await anime.reload() } else { await stories.refreshAndWait() }
             }
             .topdownDestinations()
             .task { if anime.items.isEmpty && !anime.loading { await anime.reload() } }
-            .task(id: app.mode) {
-                if app.mode == .stories && stories.items.isEmpty && !stories.loading {
+            .onAppear { if app.mode == .stories { stories.start() } }
+            .onChange(of: app.mode, initial: true) { _, mode in
+                if mode == .stories {
+                    stories.start()
                     Task { await stories.loadGenres() }
-                    await stories.reload()
                 }
             }
         }
@@ -235,9 +236,9 @@ struct StoryFilters: View {
         }
         .onChange(of: feed.source) { _, _ in
             feed.order = "source"
-            if explore || !feed.query.isEmpty { Task { await feed.reload() } }
+            if explore || !feed.query.isEmpty { feed.refresh() }
         }
-        .onChange(of: feed.genre) { _, _ in if explore || !feed.query.isEmpty { Task { await feed.reload() } } }
+        .onChange(of: feed.genre) { _, _ in if explore || !feed.query.isEmpty { feed.refresh() } }
     }
 
     private var orderName: String {
@@ -308,7 +309,7 @@ struct StoryGrid: View {
     var feed: StoryFeed
 
     var body: some View {
-        Group {
+        VStack(spacing: 14) {
             if !feed.didLoad && feed.items.isEmpty {
                 VStack(spacing: 12) {
                     ProgressView().controlSize(.large).tint(Theme.accent)
@@ -316,7 +317,7 @@ struct StoryGrid: View {
                 }
                 .frame(maxWidth: .infinity).padding(.top, 80)
             } else {
-                FeedStatus(loading: feed.loading, errors: feed.errors, empty: feed.items.isEmpty) { await feed.reload() }
+                FeedStatus(loading: feed.loading, errors: feed.errors, empty: feed.items.isEmpty) { feed.refresh() }
             }
             if !feed.sourceStatus.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -341,10 +342,8 @@ struct StoryGrid: View {
             .padding(.horizontal)
             if feed.loadingMore { ProgressView().padding() }
         }
-        // ضمان إضافي: إذا ظهرت الشبكة ولم يبدأ أي تحميل، نبدأه هنا
-        .task {
-            if !feed.didLoad && !feed.loading && feed.items.isEmpty { await feed.reload() }
-        }
+        // ضمان إضافي: إذا ظهرت الشبكة ولم يبدأ أي تحميل، نبدأه هنا (مرة واحدة على الحاوية)
+        .onAppear { feed.start() }
     }
 }
 
@@ -506,7 +505,7 @@ struct SearchView: View {
         submitted = true
         Task {
             if app.mode == .anime { anime.query = q; await anime.reload() }
-            else { stories.query = q; await stories.reload() }
+            else { stories.query = q; stories.refresh() }
         }
     }
 }
