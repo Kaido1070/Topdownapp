@@ -157,6 +157,7 @@ final class StoryFeed {
 
     /// التحميل يملكه الكتالوج نفسه وليس الشاشة، فلا تلغيه SwiftUI عند إعادة بناء الواجهة.
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var taskID = UUID()
     @ObservationIgnored private var autoRetries = 0
 
     func loadGenres() async {
@@ -173,9 +174,12 @@ final class StoryFeed {
     func refresh() {
         task?.cancel()
         autoRetries = 0
+        let id = UUID()
+        taskID = id
         task = Task { [weak self] in
             await self?.reload()
-            self?.task = nil
+            // لا نمسح مرجع تحميل أحدث بدأ بعدنا
+            if self?.taskID == id { self?.task = nil }
         }
     }
 
