@@ -314,6 +314,7 @@ struct VideoGrid: View {
 struct StoryGrid: View {
     var feed: StoryFeed
     @State private var diagnosing = false
+    @State private var recoveries = 0
 
     var body: some View {
         VStack(spacing: 14) {
@@ -352,6 +353,13 @@ struct StoryGrid: View {
         }
         // ضمان إضافي: إذا ظهرت الشبكة ولم يبدأ أي تحميل، نبدأه هنا (مرة واحدة على الحاوية)
         .onAppear { feed.start() }
+        .onChange(of: feed.didLoad) { _, done in
+            // الاستكشاف لا يكون فارغًا أبدًا؛ إن حدث نعيد التحميل (3 مرات كحد أقصى)
+            if done, feed.query.isEmpty, feed.items.isEmpty, feed.errors.isEmpty, !feed.loading, recoveries < 3 {
+                recoveries += 1
+                Task { try? await Task.sleep(for: .seconds(1)); if feed.items.isEmpty { feed.refresh() } }
+            }
+        }
         .sheet(isPresented: $diagnosing) {
             StorySourceDiagnosis(feed: feed).presentationDetents([.medium, .large])
         }
@@ -371,6 +379,7 @@ struct StorySourceDiagnosis: View {
                     LabeledContent("الإصدار", value: AppVersion.full)
                     LabeledContent("الجلسة", value: API.shared.hasSessionCookie ? "موجودة" : "غير موجودة")
                     LabeledContent("حالة الكتالوج", value: "تحميل: \(feed.loading ? "نعم" : "لا") • قصص: \(feed.items.count) • اكتمل: \(feed.didLoad ? "نعم" : "لا")")
+                    LabeledContent("المصادر", value: StorySource.concrete.map { "\($0.name)=\(feed.sourceStatus[$0] ?? "—")" }.joined(separator: " "))
                     if !feed.errors.isEmpty { Text(feed.errors.joined(separator: "\n")).font(.caption).foregroundStyle(.orange) }
                 }
                 Section("نتيجة كل مصدر") {
@@ -381,6 +390,11 @@ struct StorySourceDiagnosis: View {
                                 .foregroundStyle(ok ? .green : .red)
                             Text(detail).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         }
+                    }
+                }
+                if !feed.log.isEmpty {
+                    Section("سجل التحميل") {
+                        Text(feed.log.joined(separator: "\n")).font(.caption2.monospaced()).textSelection(.enabled)
                     }
                 }
                 Section {

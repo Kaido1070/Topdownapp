@@ -203,6 +203,14 @@ final class StoryFeed {
         await fetch(page: page + 1, append: true)
     }
 
+    /// سجل مختصر لما حدث أثناء التحميل (يظهر في «فحص المصادر»).
+    private(set) var log: [String] = []
+    private func note(_ m: String) {
+        let t = Date().formatted(.dateTime.hour().minute().second())
+        log.append(t + " " + m)
+        if log.count > 40 { log.removeFirst(log.count - 40) }
+    }
+
     private func fetch(page p: Int, append: Bool) async {
         let gen = generation
         if append { loadingMore = true } else { loading = true; errors = [] }
@@ -211,54 +219,53 @@ final class StoryFeed {
         }
         let targets = (source == .all ? StorySource.concrete : [source]).filter { !exhausted.contains($0) }
         let q = query.trimmingCharacters(in: .whitespaces), g = genre
+        note("تحميل ص\(p) من \(targets.count) مصادر")
+
+        // نفس طريقة «فحص المصادر» التي تعمل على الجهاز: طلبات مستقلة لا تُلغى بإلغاء الواجهة،
+        // تنطلق كلها معًا ثم نستلم نتيجة كل مصدر بالترتيب.
+        let jobs: [(StorySource, Task<StoryPage, Error>)] = targets.map { s in
+            (s, Task.detached { try await API.shared.stories(page: p, q: q, genre: g, source: s) })
+        }
+
         let base = append ? items : []
         var groups: [StorySource: [StoryItem]] = [:]
         var anyNext = false
-        var answered = 0
-        var replaced = append
-
-        // نعرض نتائج كل مصدر فور وصولها بدل انتظار أبطأ مصدر
-        await withTaskGroup(of: (StorySource, Result<StoryPage, Error>).self) { group in
-            for s in targets {
-                group.addTask {
-                    do { return (s, .success(try await API.shared.stories(page: p, q: q, genre: g, source: s))) }
-                    catch { return (s, .failure(error)) }
-                }
+        var newErrors: [String] = []
+        for (s, job) in jobs {
+            let result = await job.result
+            guard gen == generation else { note("تجاهل نتيجة قديمة"); return }
+            switch result {
+            case .success(let pg):
+                let list = pg.items.values
+                groups[s] = list
+                sourceStatus[s] = "\(list.count)"
+                if pg.nextPage == nil { exhausted.insert(s) } else { anyNext = true }
+                note("\(s.name): \(list.count)")
+            case .failure(let e):
+                newErrors.append("\(s.name): \(e.localizedDescription)")
+                sourceStatus[s] = "خطأ"
+                exhausted.insert(s)
+                note("\(s.name): خطأ \(e.localizedDescription)")
             }
-            for await (s, result) in group {
-                guard gen == generation, !Task.isCancelled else { continue }
-                answered += 1
-                switch result {
-                case .success(let pg):
-                    let list = pg.items.values
-                    groups[s] = list
-                    sourceStatus[s] = "\(list.count)"
-                    if pg.nextPage == nil { exhausted.insert(s) } else { anyNext = true }
-                case .failure(let e):
-                    let cancelled = (e as? URLError)?.code == .cancelled || e is CancellationError
-                    if !append { errors.append("\(s.name): " + (cancelled ? "انقطع الطلب" : e.localizedDescription)) }
-                    sourceStatus[s] = "خطأ"
-                    if !cancelled { exhausted.insert(s) }
-                }
-                var seen = Set(base.map(\.url))
-                let merged = interleave(targets.compactMap { groups[$0] }).filter { seen.insert($0.url).inserted }
-                // نُبقي القائمة السابقة حتى تصل أول نتيجة فعلية، فلا تفرغ الشاشة أثناء التحديث
-                if !merged.isEmpty || replaced || answered == targets.count {
-                    items = base + merged
-                    replaced = true
-                }
-            }
+            var seen = Set(base.map(\.url))
+            let merged = interleave(targets.compactMap { groups[$0] }).filter { seen.insert($0.url).inserted }
+            if !merged.isEmpty || append { items = base + merged }
         }
-        guard gen == generation, !Task.isCancelled else { return }
+        if !append { errors = newErrors }
+        var seenAll = Set(base.map(\.url))
+        items = base + interleave(targets.compactMap { groups[$0] }).filter { seenAll.insert($0.url).inserted }
         page = p
         hasNext = anyNext
         didLoad = true
-        // لم يصل شيء لأن الطلبات انقطعت: نعيد المحاولة تلقائيًا مرتين
-        if !append, items.isEmpty, groups.isEmpty, autoRetries < 2 {
+        note("انتهى: \(items.count) قصة")
+
+        // لم يصل شيء والمصادر لم ترجع خطأ: نعيد المحاولة تلقائيًا
+        if !append, items.isEmpty, newErrors.isEmpty, autoRetries < 2 {
             autoRetries += 1
+            note("إعادة تلقائية \(autoRetries)")
             didLoad = false
-            try? await Task.sleep(for: .milliseconds(600))
-            guard gen == generation, !Task.isCancelled else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard gen == generation else { return }
             await reload()
         }
     }
