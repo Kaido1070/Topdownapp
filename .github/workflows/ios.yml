@@ -20,6 +20,12 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Version
+        run: |
+          BASE=$(grep -E '^\s*MARKETING_VERSION:' ios/project.yml | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+).*/\1/')
+          echo "APP_VERSION=$BASE.${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "Version $BASE.${{ github.run_number }} (${{ github.run_number }})"
+
       - name: Generate Xcode project
         run: |
           brew install xcodegen
@@ -32,7 +38,7 @@ jobs:
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} MARKETING_VERSION=${{ env.APP_VERSION }} \
             build > build.log 2>&1 || { grep -E "error:" -A3 build.log | head -300; exit 1; }
           grep -E "BUILD SUCCEEDED" build.log
           test -f build/Build/Products/Release-iphoneos/Topdown.app/Topdown
