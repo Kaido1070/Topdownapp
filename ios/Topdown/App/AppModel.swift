@@ -28,6 +28,8 @@ final class AppModel {
     var toast: String?
     /// القارئ يُعرض بملء الشاشة فوق كل شيء (بدون شريط التبويبات)
     var reader: ReaderRequest?
+    /// اختبار المحاكي فقط: فتح فيديو مباشرة
+    var debugVideo: MediaItem?
 
     @ObservationIgnored @AppStorage("appLock") var appLockEnabled = false
     @ObservationIgnored @AppStorage("privacyBlur") var privacyBlur = true

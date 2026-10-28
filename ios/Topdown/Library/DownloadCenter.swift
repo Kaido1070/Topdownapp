@@ -500,6 +500,11 @@ final class DownloadCenter {
 
     func isDownloaded(key: String) -> VideoDownload? { videos.first { $0.id == key } }
 
+    /// مسار الملف المحمّل إن كانت الحلقة مكتملة التحميل
+    func localPath(for key: String) -> String? {
+        videos.first { $0.id == key && $0.state == .completed }?.localPath
+    }
+
     // MARK: - الحفظ
 
     private func load() {

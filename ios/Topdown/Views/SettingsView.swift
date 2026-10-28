@@ -5,6 +5,8 @@ struct SettingsView: View {
     @Environment(Auth.self) private var auth
     @AppStorage("preferredQuality") private var quality = "ask"
     @AppStorage("allowCellular") private var cellular = true
+    @AppStorage("player.autoNext") private var autoNext = true
+    @AppStorage("player.skipSeconds") private var skipSeconds = 85.0
     @AppStorage("notifyOnFinish") private var notify = true
     @AppStorage("appLock") private var appLock = false
     @AppStorage("privacyBlur") private var privacyBlur = true
@@ -27,6 +29,19 @@ struct SettingsView: View {
                     }
                     Toggle("التحميل عبر بيانات الجوال", isOn: $cellular)
                     Toggle("إشعار عند اكتمال التحميل", isOn: $notify)
+                }
+                Section("المشغّل") {
+                    Toggle("تشغيل الحلقة التالية تلقائيًا", isOn: $autoNext)
+                    Picker("زر تخطّي المقدمة", selection: $skipSeconds) {
+                        Text("60 ثانية").tag(60.0)
+                        Text("85 ثانية").tag(85.0)
+                        Text("90 ثانية").tag(90.0)
+                        Text("120 ثانية").tag(120.0)
+                    }
+                    Button("مسح مواضع المشاهدة المحفوظة", role: .destructive) {
+                        UserDefaults.standard.removeObject(forKey: "playback.positions")
+                        AppModel.shared.show("تم المسح")
+                    }
                 }
                 Section {
                     Toggle("قفل التطبيق بـ Face ID", isOn: $appLock)

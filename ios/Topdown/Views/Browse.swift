@@ -2,6 +2,7 @@ import SwiftUI
 
 enum Route: Hashable {
     case video(MediaItem)
+    case episode(MediaItem, [MediaItem])
     case work(MediaItem)
     case story(StoryItem)
     case favorites, history, savedStories, storyHistory, sources
@@ -12,6 +13,7 @@ extension View {
         navigationDestination(for: Route.self) { route in
             switch route {
             case .video(let item): VideoScreen(item: item)
+            case .episode(let item, let list): VideoScreen(item: item, playlist: list)
             case .work(let item): WorkScreen(item: item)
             case .story(let item): StoryScreen(item: item)
             case .favorites: FavoritesScreen()
@@ -94,6 +96,7 @@ struct ExploreView: View {
                 if app.mode == .anime { await anime.reload() } else { await stories.refreshAndWait() }
             }
             .topdownDestinations()
+            .onChange(of: app.debugVideo) { _, v in if let v { path.append(Route.video(v)); app.debugVideo = nil } }
             .task { if anime.items.isEmpty && !anime.loading { await anime.reload() } }
             .onAppear { if app.mode == .stories { stories.start() } }
             .onChange(of: app.mode, initial: true) { _, mode in
@@ -469,6 +472,14 @@ struct VideoCard: View {
                     }
                     .overlay(alignment: .topTrailing) {
                         if item.opensDetails { Badge(text: "حلقات", icon: "list.bullet").padding(6) }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if let f = PlaybackPositions.fraction(item.key) {
+                            GeometryReader { g in
+                                Capsule().fill(Theme.accent).frame(width: g.size.width * f, height: 3)
+                            }
+                            .frame(height: 3)
+                        }
                     }
                     .clipShape(.rect(cornerRadius: 16))
                 Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.leading)

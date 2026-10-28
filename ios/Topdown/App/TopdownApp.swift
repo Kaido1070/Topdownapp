@@ -35,6 +35,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return true
     }
 
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown
+    }
+
     /// استكمال التحميلات في الخلفية عندما يوقظ النظام التطبيق.
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,

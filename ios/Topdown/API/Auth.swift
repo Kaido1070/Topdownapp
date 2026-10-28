@@ -28,6 +28,13 @@ final class Auth {
                 guard let c = chapters.first else { return }
                 AppModel.shared.reader = ReaderRequest(story: first, chapters: chapters, url: c.url)
             }
+        case "player":
+            // يفتح أول حلقة من المصدر القديم في المشغّل الجديد
+            Task {
+                guard let page = try? await API.shared.home(page: 1, sort: "latest"),
+                      let first = page.items.values.first else { return }
+                AppModel.shared.debugVideo = first
+            }
         case "tabHop":
             // تبديل سريع بين التبويبات أثناء تحميل القصص (يحاكي استخدامًا حقيقيًا)
             Task {
