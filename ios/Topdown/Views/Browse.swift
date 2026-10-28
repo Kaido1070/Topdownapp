@@ -252,6 +252,7 @@ struct FeedStatus: View {
     let loading: Bool
     let errors: [String]
     let empty: Bool
+    var diagnose: (() -> Void)? = nil
     let retry: () async -> Void
 
     var body: some View {
@@ -266,6 +267,11 @@ struct FeedStatus: View {
             } actions: {
                 Button("إعادة المحاولة", systemImage: "arrow.clockwise") { Task { await retry() } }
                     .buttonStyle(.glassProminent)
+                if let diagnose {
+                    Button("فحص المصادر", systemImage: "stethoscope", action: diagnose)
+                        .buttonStyle(.glass)
+                }
+                Text("الإصدار " + AppVersion.full).font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(.top, 40)
         } else if !errors.isEmpty {
@@ -307,6 +313,7 @@ struct VideoGrid: View {
 
 struct StoryGrid: View {
     var feed: StoryFeed
+    @State private var diagnosing = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -317,7 +324,8 @@ struct StoryGrid: View {
                 }
                 .frame(maxWidth: .infinity).padding(.top, 80)
             } else {
-                FeedStatus(loading: feed.loading, errors: feed.errors, empty: feed.items.isEmpty) { feed.refresh() }
+                FeedStatus(loading: feed.loading, errors: feed.errors, empty: feed.items.isEmpty,
+                           diagnose: { diagnosing = true }) { feed.refresh() }
             }
             if !feed.sourceStatus.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -344,6 +352,66 @@ struct StoryGrid: View {
         }
         // ضمان إضافي: إذا ظهرت الشبكة ولم يبدأ أي تحميل، نبدأه هنا (مرة واحدة على الحاوية)
         .onAppear { feed.start() }
+        .sheet(isPresented: $diagnosing) {
+            StorySourceDiagnosis(feed: feed).presentationDetents([.medium, .large])
+        }
+    }
+}
+
+/// فحص مباشر لكل مصدر قصص يعرض النتيجة كما هي (عدد، خطأ، زمن) لمعرفة سبب الفراغ.
+struct StorySourceDiagnosis: View {
+    var feed: StoryFeed
+    @State private var lines: [(String, String, Bool)] = []
+    @State private var running = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    LabeledContent("الإصدار", value: AppVersion.full)
+                    LabeledContent("الجلسة", value: API.shared.hasSessionCookie ? "موجودة" : "غير موجودة")
+                    LabeledContent("حالة الكتالوج", value: "تحميل: \(feed.loading ? "نعم" : "لا") • قصص: \(feed.items.count) • اكتمل: \(feed.didLoad ? "نعم" : "لا")")
+                    if !feed.errors.isEmpty { Text(feed.errors.joined(separator: "\n")).font(.caption).foregroundStyle(.orange) }
+                }
+                Section("نتيجة كل مصدر") {
+                    if running && lines.isEmpty { HStack { ProgressView(); Text("جاري الفحص…") } }
+                    ForEach(lines, id: \.0) { name, detail, ok in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(name, systemImage: ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                                .foregroundStyle(ok ? .green : .red)
+                            Text(detail).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        }
+                    }
+                }
+                Section {
+                    Button("فحص مرة ثانية", systemImage: "arrow.clockwise") { Task { await run() } }.disabled(running)
+                    Button("إعادة تحميل القصص", systemImage: "books.vertical") { feed.refresh() }
+                } footer: {
+                    Text("صوّر هذي الشاشة وأرسلها إذا ظهرت أخطاء.")
+                }
+            }
+            .navigationTitle("فحص مصادر القصص")
+            .navigationBarTitleDisplayMode(.inline)
+            .task { await run() }
+        }
+    }
+
+    private func run() async {
+        running = true
+        lines = []
+        for s in StorySource.concrete {
+            let start = Date()
+            do {
+                let page = try await API.shared.stories(page: 1, q: "", genre: "", source: s)
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                lines.append((s.name, "\(page.items.values.count) قصة • \(ms) ms • التالية: \(page.nextPage.map(String.init) ?? "لا")", page.items.values.count > 0))
+            } catch {
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                let ns = error as NSError
+                lines.append((s.name, "\(error.localizedDescription) • \(ns.domain) \(ns.code) • \(ms) ms", false))
+            }
+        }
+        running = false
     }
 }
 
