@@ -6,6 +6,10 @@ struct SettingsView: View {
     @AppStorage("preferredQuality") private var quality = "ask"
     @AppStorage("allowCellular") private var cellular = true
     @AppStorage("player.autoNext") private var autoNext = true
+    @AppStorage("stories.quality") private var storyQuality = StoryImageQuality.balanced.rawValue
+    @AppStorage("stories.dataSaver") private var storyDataSaver = true
+    @AppStorage("stories.parallel") private var storyParallel = 2
+    @State private var compressing = false
     @AppStorage("player.skipSeconds") private var skipSeconds = 85.0
     @AppStorage("notifyOnFinish") private var notify = true
     @AppStorage("appLock") private var appLock = false
@@ -29,6 +33,33 @@ struct SettingsView: View {
                     }
                     Toggle("التحميل عبر بيانات الجوال", isOn: $cellular)
                     Toggle("إشعار عند اكتمال التحميل", isOn: $notify)
+                }
+                Section {
+                    Picker("جودة تحميل الفصول", selection: $storyQuality) {
+                        ForEach(StoryImageQuality.allCases) { q in
+                            VStack(alignment: .leading) { Text(q.name); Text(q.detail).font(.caption) }.tag(q.rawValue)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    Toggle("توفير البيانات أثناء التحميل", isOn: $storyDataSaver)
+                    Stepper("فصول في نفس الوقت: \(storyParallel)", value: $storyParallel, in: 1...3)
+                    Button {
+                        Task {
+                            compressing = true
+                            let saved = await center.recompressDownloadedChapters()
+                            compressing = false
+                            AppModel.shared.show(saved > 0 ? "تم توفير " + Storage.format(saved) : "لا يوجد ما يُضغط")
+                        }
+                    } label: {
+                        HStack {
+                            Text("ضغط الفصول المحمّلة سابقًا")
+                            Spacer()
+                            if compressing { ProgressView() }
+                        }
+                    }
+                    .disabled(compressing || storyQuality == StoryImageQuality.original.rawValue)
+                } header: { Text("تحميل القصص") } footer: {
+                    Text("الضغط يحفظ الصفحات بصيغة HEIC وبعرض مناسب للجوال. «توفير البيانات» يجلب نسخة مصغّرة عبر خدمة wsrv.nl قبل التنزيل، ويرجع للأصل تلقائيًا إذا تعذّر.")
                 }
                 Section("المشغّل") {
                     Toggle("تشغيل الحلقة التالية تلقائيًا", isOn: $autoNext)

@@ -104,8 +104,14 @@ struct StoryScreen: View {
                                 Text(c.title.isEmpty ? c.displayTitle : c.title).lineLimit(1)
                                 Spacer()
                                 if let d = center.isDownloaded(chapter: c.url) {
-                                    Image(systemName: d.state == .completed ? "arrow.down.circle.fill" : "arrow.down.circle.dotted")
-                                        .foregroundStyle(Theme.accent)
+                                    if d.state == .completed {
+                                        Image(systemName: "arrow.down.circle.fill").foregroundStyle(Theme.accent)
+                                    } else if d.state == .failed {
+                                        Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
+                                    } else {
+                                        Text("\(Int(d.progress * 100))٪").font(.caption.bold().monospacedDigit())
+                                            .foregroundStyle(d.state == .paused ? .orange : Theme.accent)
+                                    }
                                 } else if let p = c.publishedAt {
                                     Text(p).font(.caption2).foregroundStyle(.secondary)
                                 }

@@ -25,6 +25,10 @@ struct ReaderScreen: View {
 
     @AppStorage("reader.keepAwake") private var keepAwake = true
     @AppStorage("reader.dim") private var dim = 0.0
+    @AppStorage("reader.quality") private var readQuality = StoryImageQuality.original.rawValue
+    @State private var prefetchedNext: String?
+
+    private var quality: StoryImageQuality { StoryImageQuality(rawValue: readQuality) ?? .original }
 
     init(request: ReaderRequest) {
         self.request = request
@@ -52,7 +56,8 @@ struct ReaderScreen: View {
             let folder = Storage.absolute(local.folder)
             return local.pages.map { .local(folder.appending(path: $0)) }
         }
-        return images.map { .remote(Site.mangaPage($0, chapter: url)) }
+        // جودة القراءة: نسخة مصغّرة أولًا (للنت البطيء) ثم الأصل تلقائيًا إذا تعذّرت
+        return images.map { raw in .remote((quality.remote(raw).map { [$0] } ?? []) + Site.mangaPage(raw, chapter: url)) }
     }
 
     var body: some View {
@@ -62,7 +67,7 @@ struct ReaderScreen: View {
 
                 if ready, !pages.isEmpty {
                     ChapterScroll(
-                        id: url,
+                        id: url + "#" + readQuality,
                         pages: pages,
                         initialPage: initialPage,
                         endTitle: "نهاية " + current.displayTitle,
@@ -72,6 +77,7 @@ struct ReaderScreen: View {
                         onTap: { withAnimation(.easeInOut(duration: 0.22)) { controls.toggle() } },
                         onPosition: { p in
                             page = p
+                            prefetchNextIfNeeded(p)
                             ReaderPositions.save(p, for: url)
                             if local != nil { center.saveReadingPosition(story: request.story.url, chapter: url, page: p) }
                         },
@@ -166,6 +172,14 @@ struct ReaderScreen: View {
                     Button("إعادة تحميل الفصل", systemImage: "arrow.clockwise") { Task { await load() } }
                         .disabled(!app.isOnline)
                     Divider()
+                    if local == nil {
+                        Picker("جودة القراءة: " + quality.name, systemImage: "photo", selection: $readQuality) {
+                            ForEach(StoryImageQuality.allCases) { q in
+                                Text(q.name + (q == .saver ? " — للنت البطيء" : "")).tag(q.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
                     Toggle("إبقاء الشاشة مضاءة", systemImage: "sun.max", isOn: $keepAwake)
                     Picker("تعتيم الشاشة", systemImage: "moon", selection: $dim) {
                         Text("بدون تعتيم").tag(0.0)
@@ -251,6 +265,25 @@ struct ReaderScreen: View {
         url = link.url
     }
 
+    /// عند 70٪ من الفصل نجهّز الفصل التالي في الخلفية (القائمة + أول الصفحات) ليفتح فورًا.
+    private func prefetchNextIfNeeded(_ p: Int) {
+        guard let next, prefetchedNext != next.url, !pages.isEmpty, Double(p + 1) / Double(pages.count) >= 0.7,
+              center.isDownloaded(chapter: next.url)?.state != .completed, app.isOnline else { return }
+        prefetchedNext = next.url
+        let q = quality
+        Task.detached(priority: .utility) {
+            guard let imgs = try? await API.shared.chapter(next.url).images else { return }
+            ChapterPrefetch.store(next.url, imgs)
+            for raw in imgs.prefix(4) {
+                let urls = (q.remote(raw).map { [$0] } ?? []) + Site.mangaPage(raw, chapter: next.url)
+                for u in urls {
+                    if let r = try? await API.shared.session.data(for: API.shared.authorized(u)),
+                       (r.1 as? HTTPURLResponse)?.statusCode == 200 { break }
+                }
+            }
+        }
+    }
+
     private func downloadCurrent() {
         center.download(chapters: [current], of: capturedStory,
                         current: CapturedChapter(url: url, title: current.title, images: images))
@@ -269,7 +302,8 @@ struct ReaderScreen: View {
             return
         }
         do {
-            let loaded = try await API.shared.chapter(url).images
+            let loaded: [String]
+            if let cached = ChapterPrefetch.take(url) { loaded = cached } else { loaded = try await API.shared.chapter(url).images }
             guard !Task.isCancelled else { return }
             images = loaded
             initialPage = min(ReaderPositions.page(for: url), max(0, loaded.count - 1))
@@ -295,4 +329,12 @@ enum ReaderPositions {
         if d.count > 400 { d = Dictionary(uniqueKeysWithValues: d.suffix(300).map { ($0.key, $0.value) }) }
         UserDefaults.standard.set(d, forKey: key)
     }
+}
+
+/// قائمة صفحات الفصل التالي المجهّزة مسبقًا.
+enum ChapterPrefetch {
+    nonisolated(unsafe) private static var cache: [String: [String]] = [:]
+    private static let lock = NSLock()
+    static func store(_ url: String, _ images: [String]) { lock.withLock { cache[url] = images } }
+    static func take(_ url: String) -> [String]? { lock.withLock { cache.removeValue(forKey: url) } }
 }

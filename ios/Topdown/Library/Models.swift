@@ -37,6 +37,12 @@ struct ChapterDownload: Codable, Identifiable, Hashable {
     var createdAt: Date
     var lastReadPage: Int = 0
     var errorMessage: String?
+    // حقول اختيارية (متوافقة مع التحميلات القديمة)
+    var sources: [String]? = nil      // روابط الصفحات الأصلية (للاستكمال بدون إعادة جلب)
+    var pagesDone: Int? = nil         // الصفحات المكتملة
+    var bytes: Int64? = nil           // الحجم على الجهاز
+    var order: Double? = nil          // ترتيب الطابور (الأصغر أولًا)
+    var quality: String? = nil        // جودة التحميل
 
     var displayTitle: String {
         if let n = number { return "الفصل " + Self.format(n) }

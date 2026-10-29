@@ -332,7 +332,10 @@ enum ChapterPageLoader {
             for url in urls {
                 if Task.isCancelled { return nil }
                 guard let (data, resp) = try? await API.shared.session.data(for: API.shared.authorized(url)),
-                      (resp as? HTTPURLResponse)?.statusCode == 200 else { continue }
+                      (resp as? HTTPURLResponse)?.statusCode == 200 else {
+                    WsrvPolicy.failed(url)
+                    continue
+                }
                 if let r = await Task.detached(priority: .userInitiated, operation: { decode(data: data, maxPixel: maxPixel) }).value {
                     return r
                 }

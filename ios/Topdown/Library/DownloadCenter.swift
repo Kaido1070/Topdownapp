@@ -95,10 +95,11 @@ final class DownloadCenter {
                 videos[i].errorMessage = "توقف التحميل — اضغط لإعادة المحاولة"
             }
             for s in stories.indices {
-                for c in stories[s].chapters.indices where stories[s].chapters[c].state.isActive {
-                    resumeChapter(storyURL: stories[s].url, chapterURL: stories[s].chapters[c].url)
+                for c in stories[s].chapters.indices where stories[s].chapters[c].state == .downloading {
+                    stories[s].chapters[c].state = .queued
                 }
             }
+            pumpChapters()
             scheduleSave()
         }
     }
@@ -298,13 +299,35 @@ final class DownloadCenter {
         done()
     }
 
-    // MARK: - تحميل فصول القصص
+    // MARK: - تحميل فصول القصص (طابور لكل فصل لوحده مع أولوية وإيقاف/استئناف)
+
+    /// سرعة التحميل الحالية لكل فصل (بايت/ثانية)
+    private(set) var chapterSpeed: [String: Double] = [:]
+
+    @ObservationIgnored @AppStorage("stories.parallel") var storyParallel = 2
+    @ObservationIgnored @AppStorage("stories.dataSaver") var storyDataSaver = true
 
     func isDownloaded(chapter url: String) -> ChapterDownload? {
         stories.lazy.flatMap(\.chapters).first { $0.url == url }
     }
 
     func story(_ url: String) -> StoryDownload? { stories.first { $0.url == url } }
+
+    /// الفصول في الطابور مرتبة حسب الأولوية
+    var chapterQueue: [(StoryDownload, ChapterDownload)] {
+        stories.flatMap { s in s.chapters.filter { $0.state.isActive }.map { (s, $0) } }
+            .sorted { key($0.1) < key($1.1) }
+    }
+
+    private func key(_ c: ChapterDownload) -> Double { c.order ?? c.createdAt.timeIntervalSince1970 }
+
+    /// ترتيب الفصل في الانتظار (1 = التالي)، أو nil إن كان يُحمَّل الآن
+    func queuePosition(_ url: String) -> Int? {
+        let waiting = chapterQueue.filter { $0.1.state == .queued && chapterJobs[$0.1.url] == nil }
+        return waiting.firstIndex { $0.1.url == url }.map { $0 + 1 }
+    }
+
+    func isRunning(_ url: String) -> Bool { chapterJobs[url] != nil }
 
     func download(chapters links: [ChapterLink], of story: CapturedStory, current: CapturedChapter? = nil) {
         requestNotificationPermission()
@@ -320,7 +343,10 @@ final class DownloadCenter {
         stories[s].updatedAt = .now
 
         var added = 0
-        for link in links {
+        let base = (chapterQueue.map { key($0.1) }.max() ?? Date.now.timeIntervalSince1970) + 1
+        // ترتيب الفصول تصاعديًا حتى تُحمَّل بالتسلسل الطبيعي للقراءة
+        let ordered = links.sorted { ($0.number ?? .infinity) < ($1.number ?? .infinity) }
+        for (i, link) in ordered.enumerated() {
             if let existing = stories[s].chapters.firstIndex(where: { $0.url == link.url }) {
                 if stories[s].chapters[existing].state != .failed { continue }
                 stories[s].chapters.remove(at: existing)
@@ -328,70 +354,167 @@ final class DownloadCenter {
             let folder = Storage.storiesDir
                 .appending(path: Storage.hash(story.url), directoryHint: .isDirectory)
                 .appending(path: Storage.hash(link.url), directoryHint: .isDirectory)
-            stories[s].chapters.append(ChapterDownload(
+            var c = ChapterDownload(
                 url: link.url, title: link.title, number: link.number, folder: Storage.relative(folder),
-                pageCount: 0, pages: [], state: .queued, progress: 0, createdAt: .now))
+                pageCount: 0, pages: [], state: .queued, progress: 0, createdAt: .now)
+            c.order = base + Double(i)
+            c.quality = StoryImageQuality.download.rawValue
+            if current?.url == link.url { c.sources = current?.images; c.pageCount = current?.images.count ?? 0 }
+            stories[s].chapters.append(c)
             added += 1
-            let images = current?.url == link.url ? current?.images : nil
-            resumeChapter(storyURL: story.url, chapterURL: link.url, knownImages: images)
         }
         scheduleSave()
+        pumpChapters()
         Haptics.success()
-        AppModel.shared.show(added == 1 ? "بدأ تحميل الفصل" : added > 1 ? "بدأ تحميل \(added) فصل" : "الفصول محمّلة مسبقًا")
+        AppModel.shared.show(added == 1 ? "أُضيف الفصل للتحميل" : added > 1 ? "أُضيف \(added) فصل للتحميل" : "الفصول محمّلة مسبقًا")
     }
 
-    private func resumeChapter(storyURL: String, chapterURL: String, knownImages: [String]? = nil) {
+    /// يشغّل الفصول التالية في الطابور حسب الأولوية وعدد التحميلات المتزامنة.
+    func pumpChapters() {
+        let limit = min(3, max(1, storyParallel))
+        let free = limit - chapterJobs.count
+        guard free > 0 else { return }
+        let waiting = chapterQueue.filter { $0.1.state == .queued && chapterJobs[$0.1.url] == nil }
+        for (s, c) in waiting.prefix(free) { startChapter(storyURL: s.url, chapterURL: c.url) }
+    }
+
+    private func startChapter(storyURL: String, chapterURL: String) {
         guard chapterJobs[chapterURL] == nil else { return }
+        updateChapter(storyURL, chapterURL) { $0.state = .downloading }
         chapterJobs[chapterURL] = Task { [weak self] in
-            await self?.runChapter(storyURL: storyURL, chapterURL: chapterURL, knownImages: knownImages)
+            await self?.runChapter(storyURL: storyURL, chapterURL: chapterURL)
             self?.chapterJobs[chapterURL] = nil
+            self?.chapterSpeed[chapterURL] = nil
+            self?.pumpChapters()
         }
     }
 
-    private func runChapter(storyURL: String, chapterURL: String, knownImages: [String]?) async {
-        // لا نحمّل أكثر من فصلين في نفس الوقت حتى لا نُثقل المصدر
-        while chapterJobs.count > 2, chapterJobs.keys.sorted().prefix(2).contains(chapterURL) == false {
-            try? await Task.sleep(for: .milliseconds(500))
-            if Task.isCancelled { return }
+    /// «حمّل الآن»: يقدّم الفصل لأول الطابور، وإن كانت الخانات ممتلئة يؤجّل أقل فصل أولوية.
+    func prioritize(chapter url: String) {
+        guard let entry = chapterQueue.first(where: { $0.1.url == url }) else { return }
+        let s = entry.0
+        let top = (chapterQueue.map { key($0.1) }.min() ?? Date.now.timeIntervalSince1970) - 1
+        updateChapter(s.url, url) { $0.order = top; if $0.state == .paused { $0.state = .queued } }
+        Haptics.tap()
+        if chapterJobs[url] == nil, chapterJobs.count >= min(3, max(1, storyParallel)) {
+            // نؤجّل آخر فصل قيد التحميل (الأقل أولوية) ونحتفظ بما نزل منه
+            let running = chapterQueue.filter { chapterJobs[$0.1.url] != nil && $0.1.url != url }
+            if let last = running.last {
+                let rs = last.0, rc = last.1
+                chapterJobs[rc.url]?.cancel()
+                chapterJobs[rc.url] = nil
+                chapterSpeed[rc.url] = nil
+                updateChapter(rs.url, rc.url) { $0.state = .queued }
+            }
         }
-        updateChapter(storyURL, chapterURL) { $0.state = .downloading }
+        pumpChapters()
+    }
+
+    func pause(chapter url: String) {
+        guard let s = chapterQueue.first(where: { $0.1.url == url })?.0 else { return }
+        chapterJobs[url]?.cancel()
+        chapterJobs[url] = nil
+        chapterSpeed[url] = nil
+        updateChapter(s.url, url) { $0.state = .paused }
+        pumpChapters()
+    }
+
+    func resume(chapter url: String) {
+        guard let s = chapterQueue.first(where: { $0.1.url == url })?.0 else { return }
+        updateChapter(s.url, url) { $0.state = .queued; $0.errorMessage = nil }
+        pumpChapters()
+    }
+
+    func pauseAllChapters() {
+        for (_, c) in chapterQueue where c.state != .paused { pause(chapter: c.url) }
+    }
+
+    func resumeAllChapters() {
+        for (s, c) in chapterQueue where c.state == .paused { updateChapter(s.url, c.url) { $0.state = .queued } }
+        pumpChapters()
+    }
+
+    private func runChapter(storyURL: String, chapterURL: String) async {
         do {
-            var images = knownImages ?? []
+            guard let info = chapter(storyURL, chapterURL) else { return }
+            var images = info.sources ?? []
             if images.isEmpty {
                 images = try await API.shared.chapter(chapterURL).images
+                updateChapter(storyURL, chapterURL) { $0.sources = images }
             }
             guard !images.isEmpty else { throw URLError(.zeroByteResource) }
-            guard let folderPath = chapter(storyURL, chapterURL)?.folder else { return }
-            let folder = Storage.make(Storage.absolute(folderPath))
-            updateChapter(storyURL, chapterURL) { $0.pageCount = images.count }
+            let folder = Storage.make(Storage.absolute(info.folder))
+            let quality = StoryImageQuality(rawValue: info.quality ?? "") ?? .balanced
+            let saver = storyDataSaver
 
+            // الصفحات المحمّلة سابقًا (عند الاستئناف) لا نعيد تحميلها
             var pages = [String?](repeating: nil, count: images.count)
-            var done = 0
-            await withTaskGroup(of: (Int, String?).self) { group in
+            var bytes: Int64 = 0
+            if let files = try? FileManager.default.contentsOfDirectory(atPath: folder.path()) {
+                for f in files {
+                    guard let i = Int(f.prefix(4)), images.indices.contains(i) else { continue }
+                    pages[i] = f
+                    bytes += Storage.size(of: folder.appending(path: f))
+                }
+            }
+            var done = pages.compactMap { $0 }.count
+            updateChapter(storyURL, chapterURL) {
+                $0.pageCount = images.count; $0.pagesDone = done; $0.bytes = bytes
+                $0.progress = Double(done) / Double(images.count)
+            }
+
+            let missing = images.indices.filter { pages[$0] == nil }
+            var windowStart = Date.now
+            var windowBytes: Int64 = 0
+            await withTaskGroup(of: (Int, String?, Int64).self) { group in
                 var next = 0
-                while next < min(4, images.count) {
-                    let i = next, src = images[i]
-                    group.addTask { (i, await Self.fetchPage(src, chapterURL: chapterURL, index: i, folder: folder)) }
+                while next < min(3, missing.count) {
+                    let i = missing[next], src = images[i]
+                    group.addTask {
+                        let r = await Self.fetchPage(src, chapterURL: chapterURL, index: i, folder: folder, quality: quality, saver: saver)
+                        return (i, r?.0, r?.1 ?? 0)
+                    }
                     next += 1
                 }
-                while let result = await group.next() {
-                    if Task.isCancelled { group.cancelAll(); return }
-                    pages[result.0] = result.1
-                    done += 1
-                    let fraction = Double(done) / Double(images.count)
-                    updateChapter(storyURL, chapterURL) { $0.progress = fraction }
-                    if next < images.count {
-                        let i = next, src = images[i]
-                        group.addTask { (i, await Self.fetchPage(src, chapterURL: chapterURL, index: i, folder: folder)) }
+                while let r = await group.next() {
+                    if Task.isCancelled { group.cancelAll(); continue }
+                    let i = r.0
+                    if let name = r.1 {
+                        pages[i] = name
+                        done += 1
+                        bytes += r.2
+                        windowBytes += r.2
+                    }
+                    let elapsed = Date.now.timeIntervalSince(windowStart)
+                    if elapsed >= 1 {
+                        let current = Double(windowBytes) / elapsed
+                        chapterSpeed[chapterURL] = (chapterSpeed[chapterURL] ?? current) * 0.5 + current * 0.5
+                        windowStart = .now
+                        windowBytes = 0
+                    }
+                    let d = done, b = bytes
+                    updateChapter(storyURL, chapterURL) {
+                        $0.pagesDone = d; $0.bytes = b; $0.progress = Double(d) / Double(images.count)
+                    }
+                    if next < missing.count {
+                        let j = missing[next], src = images[j]
+                        group.addTask {
+                            let r = await Self.fetchPage(src, chapterURL: chapterURL, index: j, folder: folder, quality: quality, saver: saver)
+                            return (j, r?.0, r?.1 ?? 0)
+                        }
                         next += 1
                     }
                 }
             }
             if Task.isCancelled { return }
             let saved = pages.compactMap { $0 }
-            if saved.count < max(1, images.count * 9 / 10) { throw URLError(.cannotLoadFromNetwork) }
+            if saved.count < max(1, images.count * 9 / 10) {
+                throw NSError(domain: "Topdown", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                    "تعذّر تحميل \(images.count - saved.count) صفحة من \(images.count) — أعد المحاولة لإكمال الناقص"])
+            }
             updateChapter(storyURL, chapterURL) {
                 $0.pages = saved; $0.state = .completed; $0.progress = 1; $0.errorMessage = nil
+                $0.bytes = Storage.size(of: folder)
             }
             if let s = story(storyURL), !s.chapters.contains(where: { $0.state.isActive }) {
                 notify("اكتمل التحميل", s.title)
@@ -402,16 +525,32 @@ final class DownloadCenter {
         }
     }
 
-    /// يجرب الرابط الأصلي ثم بروكسي الموقع (/api/manga-image) مثل ما يفعل الموقع نفسه.
-    nonisolated private static func fetchPage(_ src: String, chapterURL: String, index: Int, folder: URL) async -> String? {
-        for url in Site.mangaPage(src, chapter: chapterURL) {
+    /// يجلب الصفحة (نسخة مضغوطة أولًا عند توفير البيانات، ثم الأصلية ثم بروكسي الموقع)،
+    /// ويعيد ضغطها على الجهاز حسب الجودة المختارة.
+    nonisolated private static func fetchPage(_ src: String, chapterURL: String, index: Int, folder: URL,
+                                              quality: StoryImageQuality, saver: Bool) async -> (String, Int64)? {
+        var candidates: [(URL, Bool)] = []
+        if saver, let w = quality.remote(src) { candidates.append((w, true)) }
+        candidates += Site.mangaPage(src, chapter: chapterURL).map { ($0, false) }
+        for (url, compressed) in candidates {
+            if Task.isCancelled { return nil }
             let req = Self.request(url)
             guard let got = await Self.get(req), case let (data, resp) = got,
                   let http = resp as? HTTPURLResponse, http.statusCode == 200,
-                  data.count > 200, UIImage(data: data) != nil else { continue }
-            let ext = (http.mimeType ?? "").contains("png") ? "png" : (http.mimeType ?? "").contains("webp") ? "webp" : "jpg"
+                  data.count > 200, UIImage(data: data) != nil else {
+                if compressed { WsrvPolicy.failed(url) }
+                continue
+            }
+            var out = data
+            let mime = http.mimeType ?? ""
+            var ext = mime.contains("png") ? "png" : mime.contains("webp") ? "webp" : mime.contains("avif") ? "avif" : "jpg"
+            if quality != .original, let c = ImageCompressor.compress(data, maxWidth: compressed ? nil : quality.maxWidth,
+                                                                      quality: quality.compression) {
+                out = c.data
+                ext = c.ext
+            }
             let name = String(format: "%04d.%@", index, ext)
-            do { try data.write(to: folder.appending(path: name)); return name } catch { return nil }
+            do { try out.write(to: folder.appending(path: name)); return (name, Int64(out.count)) } catch { return nil }
         }
         return nil
     }
@@ -441,14 +580,44 @@ final class DownloadCenter {
     }
 
     func retry(chapter: ChapterDownload, in story: StoryDownload) {
-        updateChapter(story.url, chapter.url) { $0.state = .queued; $0.progress = 0 }
-        resumeChapter(storyURL: story.url, chapterURL: chapter.url)
+        updateChapter(story.url, chapter.url) { $0.state = .queued; $0.errorMessage = nil }
+        pumpChapters()
     }
 
     func cancel(chapter: ChapterDownload, in story: StoryDownload) {
         chapterJobs[chapter.url]?.cancel()
         chapterJobs[chapter.url] = nil
+        chapterSpeed[chapter.url] = nil
         remove(chapter: chapter, from: story)
+        pumpChapters()
+    }
+
+    /// يعيد ضغط الفصول المحمّلة سابقًا بالجودة الحالية لتوفير المساحة.
+    func recompressDownloadedChapters() async -> Int64 {
+        let quality = StoryImageQuality.download
+        guard quality != .original else { return 0 }
+        var saved: Int64 = 0
+        for s in stories {
+            for c in s.chapters where c.state == .completed {
+                let folder = Storage.absolute(c.folder)
+                var names: [String] = []
+                for name in c.pages {
+                    let file = folder.appending(path: name)
+                    guard let data = try? Data(contentsOf: file) else { names.append(name); continue }
+                    let result = await Task.detached { ImageCompressor.compress(data, maxWidth: quality.maxWidth, quality: quality.compression) }.value
+                    guard let out = result else { names.append(name); continue }
+                    let newName = String(name.prefix(4)) + "." + out.ext
+                    do {
+                        try out.data.write(to: folder.appending(path: newName))
+                        if newName != name { try? FileManager.default.removeItem(at: file) }
+                        saved += Int64(data.count - out.data.count)
+                        names.append(newName)
+                    } catch { names.append(name) }
+                }
+                updateChapter(s.url, c.url) { $0.pages = names; $0.bytes = Storage.size(of: folder); $0.quality = quality.rawValue }
+            }
+        }
+        return saved
     }
 
     func remove(chapter: ChapterDownload, from story: StoryDownload) {
@@ -461,6 +630,7 @@ final class DownloadCenter {
 
     func remove(story: StoryDownload) {
         for c in story.chapters { chapterJobs[c.url]?.cancel(); chapterJobs[c.url] = nil }
+        defer { pumpChapters() }
         try? FileManager.default.removeItem(at: Storage.storiesDir.appending(path: Storage.hash(story.url)))
         if let cover = story.coverFile { try? FileManager.default.removeItem(at: Storage.absolute(cover)) }
         stories.removeAll { $0.url == story.url }

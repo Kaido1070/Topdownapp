@@ -35,6 +35,17 @@ final class Auth {
                       let first = page.items.values.first else { return }
                 AppModel.shared.debugVideo = first
             }
+        case "storyDownload":
+            // يضيف 4 فصول للطابور ويفتح شاشة التحميلات
+            Task {
+                guard let page = try? await API.shared.stories(page: 1, q: "", genre: "", source: .arabtaku),
+                      let first = page.items.values.first,
+                      let detail = try? await API.shared.story(first.url) else { return }
+                let links = Array(detail.chapters.values.prefix(4))
+                DownloadCenter.shared.download(chapters: links, of: CapturedStory(title: detail.title, url: detail.url, cover: detail.cover, chapters: detail.chapters.values))
+                UserDefaults.standard.set(2, forKey: "smokeLibrarySection")
+                AppModel.shared.tab = .library
+            }
         case "tabHop":
             // تبديل سريع بين التبويبات أثناء تحميل القصص (يحاكي استخدامًا حقيقيًا)
             Task {

@@ -75,7 +75,12 @@ struct LibraryView: View {
             .searchable(text: $query, prompt: "ابحث في المحمّلات")
             .navigationDestination(for: String.self) { url in OfflineStoryView(storyURL: url) }
             .fullScreenCover(item: $playing) { v in PlayerScreen(video: v) }
-            .onAppear { if center.activeCount > 0 && videos.isEmpty && stories.isEmpty { section = 2 } }
+            .onAppear {
+                if center.activeCount > 0 && videos.isEmpty && stories.isEmpty { section = 2 }
+                #if DEBUG
+                if UserDefaults.standard.integer(forKey: "smokeLibrarySection") == 2 { section = 2 }
+                #endif
+            }
         }
     }
 }
