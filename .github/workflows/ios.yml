@@ -141,6 +141,7 @@ jobs:
           sleep 30; xcrun simctl io "$UDID" screenshot shots/08-player.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab storyDownload
           sleep 25; xcrun simctl io "$UDID" screenshot shots/09-story-downloads.png
+          sleep 50; xcrun simctl io "$UDID" screenshot shots/10-story-downloads-later.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab reader
           sleep 35; xcrun simctl io "$UDID" screenshot shots/06-reader.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab account
