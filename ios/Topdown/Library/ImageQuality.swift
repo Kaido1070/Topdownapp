@@ -61,9 +61,33 @@ enum StoryImageQuality: String, CaseIterable, Identifiable {
     }
 }
 
-/// إعادة ضغط الصور على الجهاز إلى HEIC (أو JPEG) بعرض مناسب للشاشة.
+/// إعادة ضغط الصور على الجهاز إلى JPEG بعرض مناسب للشاشة.
+/// (HEIC يعتمد على مشفّر الفيديو في الجهاز وقد يتجمّد؛ JPEG برمجي وموثوق على كل الأجهزة)
 enum ImageCompressor {
-    struct Output { let data: Data; let ext: String }
+    struct Output: Sendable { let data: Data; let ext: String }
+
+    /// طابور مستقل للضغط (لا يستهلك خيوط Swift المشتركة فلا يجمّد بقية التطبيق)
+    private static let queue: OperationQueue = {
+        let q = OperationQueue()
+        q.name = "topdown.image-compress"
+        q.maxConcurrentOperationCount = 2
+        q.qualityOfService = .utility
+        return q
+    }()
+
+    static func compressAsync(_ data: Data, maxWidth: CGFloat?, quality: Double) async -> Output? {
+        await withCheckedContinuation { (c: CheckedContinuation<Output?, Never>) in
+            queue.addOperation { c.resume(returning: compress(data, maxWidth: maxWidth, quality: quality)) }
+        }
+    }
+
+    /// تحقق سريع أن البيانات صورة صالحة (من الترويسة بدون فك الصورة كاملة)
+    static func isImage(_ data: Data) -> Bool {
+        guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(src) > 0,
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return false }
+        return (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0 > 0
+    }
 
     static func compress(_ data: Data, maxWidth: CGFloat?, quality: Double) -> Output? {
         guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -75,7 +99,7 @@ enum ImageCompressor {
                                      kCGImageSourceCreateThumbnailWithTransform: true,
                                      kCGImageSourceThumbnailMaxPixelSize: max(w, h) * scale]
         guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
-        for (type, ext) in [(UTType.heic, "heic"), (UTType.jpeg, "jpg")] {
+        for (type, ext) in [(UTType.jpeg, "jpg")] {
             let out = NSMutableData()
             guard let dest = CGImageDestinationCreateWithData(out, type.identifier as CFString, 1, nil) else { continue }
             CGImageDestinationAddImage(dest, cg, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)

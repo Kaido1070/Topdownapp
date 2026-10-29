@@ -59,7 +59,7 @@ struct SettingsView: View {
                     }
                     .disabled(compressing || storyQuality == StoryImageQuality.original.rawValue)
                 } header: { Text("تحميل القصص") } footer: {
-                    Text("الضغط يحفظ الصفحات بصيغة HEIC وبعرض مناسب للجوال. «توفير البيانات» يجلب نسخة مصغّرة عبر خدمة wsrv.nl قبل التنزيل، ويرجع للأصل تلقائيًا إذا تعذّر.")
+                    Text("الضغط يحفظ الصفحات بصيغة JPEG وبعرض مناسب للجوال. «توفير البيانات» يجلب نسخة مصغّرة عبر خدمة wsrv.nl قبل التنزيل، ويرجع للأصل تلقائيًا إذا تعذّر.")
                 }
                 Section("المشغّل") {
                     Toggle("تشغيل الحلقة التالية تلقائيًا", isOn: $autoNext)

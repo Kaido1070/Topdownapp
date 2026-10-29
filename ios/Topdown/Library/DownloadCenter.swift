@@ -537,15 +537,15 @@ final class DownloadCenter {
             let req = Self.request(url)
             guard let got = await Self.get(req), case let (data, resp) = got,
                   let http = resp as? HTTPURLResponse, http.statusCode == 200,
-                  data.count > 200, UIImage(data: data) != nil else {
+                  data.count > 200, ImageCompressor.isImage(data) else {
                 if compressed { WsrvPolicy.failed(url) }
                 continue
             }
             var out = data
             let mime = http.mimeType ?? ""
             var ext = mime.contains("png") ? "png" : mime.contains("webp") ? "webp" : mime.contains("avif") ? "avif" : "jpg"
-            if quality != .original, let c = ImageCompressor.compress(data, maxWidth: compressed ? nil : quality.maxWidth,
-                                                                      quality: quality.compression) {
+            if quality != .original, let c = await ImageCompressor.compressAsync(data, maxWidth: compressed ? nil : quality.maxWidth,
+                                                                                 quality: quality.compression) {
                 out = c.data
                 ext = c.ext
             }
@@ -604,7 +604,7 @@ final class DownloadCenter {
                 for name in c.pages {
                     let file = folder.appending(path: name)
                     guard let data = try? Data(contentsOf: file) else { names.append(name); continue }
-                    let result = await Task.detached { ImageCompressor.compress(data, maxWidth: quality.maxWidth, quality: quality.compression) }.value
+                    let result = await ImageCompressor.compressAsync(data, maxWidth: quality.maxWidth, quality: quality.compression)
                     guard let out = result else { names.append(name); continue }
                     let newName = String(name.prefix(4)) + "." + out.ext
                     do {
