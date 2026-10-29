@@ -141,12 +141,15 @@ jobs:
           sleep 30; xcrun simctl io "$UDID" screenshot shots/08-player.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab storyDownload
           sleep 25; xcrun simctl io "$UDID" screenshot shots/09-story-downloads.png
+          PID=$(pgrep -f "Topdown.app/Topdown" | head -1); echo "PID $PID"
+          if [ -n "$PID" ]; then sample "$PID" 3 -file shots/sample-story-download.txt >/dev/null 2>&1 || true; fi
           sleep 50; xcrun simctl io "$UDID" screenshot shots/10-story-downloads-later.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab reader
           sleep 35; xcrun simctl io "$UDID" screenshot shots/06-reader.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab account
           sleep 15; xcrun simctl io "$UDID" screenshot shots/04-account.png
           pgrep -fl Topdown.app || { echo "APP NOT RUNNING (crash?)"; exit 1; }
+          grep -E "story/chapter|stories\?|/api/story\?" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | tail -20 || true
           grep -E "GET /api|POST /api" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | sed -E 's/\?.*( [0-9]{3} )/\1/' | sort | uniq -c | sort -rn | head -40
 
       - uses: actions/upload-artifact@v4
