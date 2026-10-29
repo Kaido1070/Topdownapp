@@ -128,7 +128,7 @@ jobs:
           xcrun simctl launch "$UDID" com.topdown.app
           sleep 10
           xcrun simctl io "$UDID" screenshot shots/01-login.png
-          ARGS="-smokeBaseURL http://127.0.0.1:8788/ -smokePassword testpass"
+          ARGS="-smokeBaseURL http://127.0.0.1:8788/ -smokePassword testpass -notifyOnFinish NO"
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS
           sleep 40; xcrun simctl io "$UDID" screenshot shots/02-anime.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab stories
