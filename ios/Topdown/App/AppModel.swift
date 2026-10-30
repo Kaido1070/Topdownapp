@@ -26,6 +26,10 @@ final class AppModel {
     var isLocked = false
     var isObscured = false
     var toast: String?
+    /// الواجهة الظاهرة (محمّل فيديو عادي) تغطي التطبيق الحقيقي حتى يُدخَل الرمز
+    var concealed = true
+    /// لا نبني التطبيق الحقيقي إطلاقًا قبل أول فتح بالرمز
+    var revealedOnce = false
     /// القارئ يُعرض بملء الشاشة فوق كل شيء (بدون شريط التبويبات)
     var reader: ReaderRequest?
     /// اختبار المحاكي فقط: فتح فيديو مباشرة
@@ -34,6 +38,9 @@ final class AppModel {
     @ObservationIgnored @AppStorage("appLock") var appLockEnabled = false
     @ObservationIgnored @AppStorage("privacyBlur") var privacyBlur = true
     @ObservationIgnored @AppStorage("appearance") var appearance = "dark"
+    /// مهلة (بالثواني) قبل العودة للواجهة الظاهرة بعد الخروج من التطبيق
+    @ObservationIgnored @AppStorage("stealth.grace") var stealthGrace = 0.0
+    @ObservationIgnored private var backgroundedAt: Date?
 
     var colorScheme: ColorScheme? {
         switch appearance { case "light": .light; case "dark": .dark; default: nil }
@@ -70,21 +77,40 @@ final class AppModel {
         switch phase {
         case .active:
             isObscured = false
-            if isLocked { unlock() }
+            if let since = backgroundedAt, revealedOnce, Date().timeIntervalSince(since) < stealthGrace {
+                concealed = false
+            }
+            backgroundedAt = nil
+            if isLocked && !concealed { unlock() }
         case .inactive:
-            if privacyBlur { isObscured = true }
+            if privacyBlur && !concealed { isObscured = true }
         case .background:
             if privacyBlur { isObscured = true }
             if appLockEnabled { isLocked = true }
+            // الواجهة الظاهرة تغطي فورًا حتى تظهر هي في مبدّل التطبيقات
+            if !concealed { backgroundedAt = Date() }
+            concealed = true
         @unknown default: break
         }
+    }
+
+    /// يكشف التطبيق الحقيقي بعد التحقق من الرمز
+    func reveal() {
+        isLocked = false
+        revealedOnce = true
+        concealed = false
+    }
+
+    func conceal() {
+        backgroundedAt = nil
+        concealed = true
     }
 
     func unlock() {
         let ctx = LAContext()
         var err: NSError?
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else { isLocked = false; return }
-        ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "افتح Topdown") { ok, _ in
+        ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "فتح التطبيق") { ok, _ in
             Task { @MainActor in if ok { AppModel.shared.isLocked = false } }
         }
     }

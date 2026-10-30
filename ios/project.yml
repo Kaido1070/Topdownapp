@@ -33,13 +33,12 @@ targets:
     info:
       path: Topdown/Info.plist
       properties:
-        CFBundleDisplayName: Topdown
+        CFBundleDisplayName: محمّل الفيديو
         CFBundleDevelopmentRegion: ar
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
-        UILaunchScreen:
-          UIColorName: AccentColor
+        UILaunchScreen: {}
         UIApplicationSupportsIndirectInputEvents: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -52,9 +51,9 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIBackgroundModes:
           - audio
-        NSFaceIDUsageDescription: يُستخدم Face ID لقفل التطبيق وحماية خصوصيتك.
-        UIFileSharingEnabled: true
-        LSSupportsOpeningDocumentsInPlace: true
+        NSFaceIDUsageDescription: يُستخدم Face ID لحماية ملفاتك.
+        UIFileSharingEnabled: false
+        LSSupportsOpeningDocumentsInPlace: false
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true

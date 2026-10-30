@@ -374,8 +374,7 @@ final class PlayerModel: NSObject {
     private func updateNowPlaying() {
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: item.title,
-            MPMediaItemPropertyArtist: "Topdown",
-            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
+                        MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
         ]
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = current

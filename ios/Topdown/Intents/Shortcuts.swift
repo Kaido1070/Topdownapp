@@ -1,8 +1,8 @@
 import AppIntents
 
 struct OpenLibraryIntent: AppIntent {
-    static let title: LocalizedStringResource = "فتح تحميلات Topdown"
-    static let description = IntentDescription("يفتح المحتوى المحمّل للمشاهدة والقراءة بدون إنترنت.")
+    static let title: LocalizedStringResource = "فتح التحميلات"
+    static let description = IntentDescription("يفتح الفيديوهات المحفوظة.")
     static let openAppWhenRun = true
 
     @MainActor
@@ -13,7 +13,7 @@ struct OpenLibraryIntent: AppIntent {
 }
 
 struct OpenDownloadsIntent: AppIntent {
-    static let title: LocalizedStringResource = "البحث في Topdown"
+    static let title: LocalizedStringResource = "تنزيل من رابط"
     static let openAppWhenRun = true
 
     @MainActor
@@ -26,10 +26,10 @@ struct OpenDownloadsIntent: AppIntent {
 struct TopdownShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: OpenLibraryIntent(),
-                    phrases: ["افتح مكتبة \(.applicationName)", "Open \(.applicationName) library"],
-                    shortTitle: "المكتبة", systemImageName: "square.stack.fill")
+                    phrases: ["افتح تحميلات \(.applicationName)", "Open \(.applicationName) downloads"],
+                    shortTitle: "التحميلات", systemImageName: "arrow.down.circle")
         AppShortcut(intent: OpenDownloadsIntent(),
-                    phrases: ["ابحث في \(.applicationName)", "Search \(.applicationName)"],
-                    shortTitle: "البحث", systemImageName: "magnifyingglass")
+                    phrases: ["نزّل فيديو في \(.applicationName)", "Download with \(.applicationName)"],
+                    shortTitle: "تنزيل", systemImageName: "link")
     }
 }

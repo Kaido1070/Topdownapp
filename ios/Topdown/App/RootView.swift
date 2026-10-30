@@ -7,15 +7,17 @@ struct RootView: View {
     var body: some View {
         ZStack {
             Theme.background.ignoresSafeArea()
-            switch auth.state {
-            case .checking:
-                SplashView()
-            case .signedOut:
-                LoginView()
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            case .signedIn:
-                MainTabs()
-                    .transition(.opacity)
+            if app.revealedOnce {
+                switch auth.state {
+                case .checking:
+                    SplashView()
+                case .signedOut:
+                    LoginView()
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                case .signedIn:
+                    MainTabs()
+                        .transition(.opacity)
+                }
             }
 
             if let toast = app.toast {
@@ -37,6 +39,10 @@ struct RootView: View {
         }
         .animation(.smooth, value: app.isObscured)
         .animation(.smooth, value: app.isLocked)
+        // الواجهة الظاهرة في نافذة مستقلة فوق كل شيء (حتى الشاشات المعروضة بملء الشاشة)
+        .onChange(of: app.concealed, initial: true) { _, concealed in
+            Curtain.shared.update(concealed: concealed)
+        }
         .task {
             await auth.bootstrap()
             // تأكيد مرئي أن التحديث تثبّت فعلًا
@@ -155,9 +161,9 @@ struct LockView: View {
         ZStack {
             Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
             VStack(spacing: 18) {
-                BrandMark(size: 64)
+                Image(systemName: "lock.fill").font(.system(size: 34)).foregroundStyle(.secondary)
                 if app.isLocked {
-                    Text("Topdown مقفل").font(.title3.bold())
+                    Text("مقفل").font(.title3.bold())
                     Button("فتح القفل", systemImage: "faceid") { app.unlock() }
                         .buttonStyle(.glassProminent)
                         .controlSize(.large)

@@ -127,7 +127,7 @@ jobs:
           mkdir -p shots
           xcrun simctl launch "$UDID" com.topdown.app
           sleep 10
-          xcrun simctl io "$UDID" screenshot shots/01-login.png
+          xcrun simctl io "$UDID" screenshot shots/01-decoy-home.png
           ARGS="-smokeBaseURL http://127.0.0.1:8788/ -smokePassword testpass -notifyOnFinish NO"
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS
           sleep 40; xcrun simctl io "$UDID" screenshot shots/02-anime.png
@@ -148,6 +148,10 @@ jobs:
           sleep 35; xcrun simctl io "$UDID" screenshot shots/06-reader.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab account
           sleep 15; xcrun simctl io "$UDID" screenshot shots/04-account.png
+          xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab decoy
+          sleep 12; xcrun simctl io "$UDID" screenshot shots/11-decoy-code.png
+          xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab decoyUnlock
+          sleep 25; xcrun simctl io "$UDID" screenshot shots/12-decoy-unlocked.png
           pgrep -fl Topdown.app || { echo "APP NOT RUNNING (crash?)"; exit 1; }
           grep -E "story/chapter|stories\?|/api/story\?" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | tail -20 || true
           grep -E "GET /api|POST /api" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | sed -E 's/\?.*( [0-9]{3} )/\1/' | sort | uniq -c | sort -rn | head -40

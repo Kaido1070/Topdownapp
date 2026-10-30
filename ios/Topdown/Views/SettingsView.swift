@@ -15,6 +15,8 @@ struct SettingsView: View {
     @AppStorage("appLock") private var appLock = false
     @AppStorage("privacyBlur") private var privacyBlur = true
     @AppStorage("appearance") private var appearance = "dark"
+    @AppStorage("stealth.grace") private var stealthGrace = 0.0
+    @AppStorage("stealth.faceID") private var stealthFaceID = false
     @State private var confirmDelete = false
     @State private var confirmLogout = false
 
@@ -78,6 +80,18 @@ struct SettingsView: View {
                     Toggle("قفل التطبيق بـ Face ID", isOn: $appLock)
                     Toggle("إخفاء المحتوى في مبدّل التطبيقات", isOn: $privacyBlur)
                 } header: { Text("الخصوصية") }
+                Section {
+                    Button("إخفاء الآن", systemImage: "eye.slash.fill") { AppModel.shared.conceal() }
+                    Picker("الإخفاء بعد الخروج", selection: $stealthGrace) {
+                        Text("فورًا").tag(0.0)
+                        Text("بعد دقيقة").tag(60.0)
+                        Text("بعد 5 دقائق").tag(300.0)
+                        Text("بعد 15 دقيقة").tag(900.0)
+                    }
+                    Toggle("Face ID بدل الرمز", isOn: $stealthFaceID)
+                } header: { Text("وضع التخفّي") } footer: {
+                    Text("التطبيق يظهر للجميع كمحمّل فيديو عادي. للدخول: الإعدادات ← اضغط على «الإصدار» 5 مرات متتالية ثم اكتب كلمة المرور.")
+                }
                 Section("المظهر") {
                     Picker("السمة", selection: $appearance) {
                         Text("داكن").tag("dark")
@@ -103,7 +117,7 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("الإصدار", value: AppVersion.full)
                 } footer: {
-                    Text("المحمّلات تبقى على جهازك وتشتغل بدون إنترنت، وتظهر أيضًا في تطبيق «الملفات» داخل مجلد Topdown.")
+                    Text("المحمّلات تبقى على جهازك وتشتغل بدون إنترنت، ومخفية عن تطبيق «الملفات».")
                 }
             }
             .navigationTitle("الإعدادات")
@@ -111,7 +125,10 @@ struct SettingsView: View {
                 Button("حذف الكل", role: .destructive) { center.deleteEverything() }
             }
             .confirmationDialog("تسجيل الخروج؟", isPresented: $confirmLogout, titleVisibility: .visible) {
-                Button("تسجيل الخروج", role: .destructive) { Task { await auth.logout() } }
+                Button("تسجيل الخروج", role: .destructive) {
+                    AppModel.shared.conceal()
+                    Task { await auth.logout() }
+                }
             }
         }
     }

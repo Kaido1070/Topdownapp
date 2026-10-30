@@ -279,7 +279,7 @@ final class DownloadCenter {
         if let error = error as NSError? {
             if error.code == NSURLErrorCancelled { return }
             update(video: id) { $0.state = .failed; $0.errorMessage = error.localizedDescription }
-            notify("فشل التحميل", v.title)
+            notify("تعذّر التحميل", "افتح التطبيق لإعادة المحاولة")
             return
         }
         guard v.localPath != nil else {
@@ -291,7 +291,7 @@ final class DownloadCenter {
             if let p = $0.localPath { $0.bytes = Storage.size(of: Storage.absolute(p)) }
         }
         Haptics.success()
-        notify("اكتمل التحميل", v.title)
+        notify("اكتمل التحميل", "الملف جاهز في التحميلات")
     }
 
     fileprivate func sessionFinishedEvents(_ identifier: String?) {
@@ -517,7 +517,7 @@ final class DownloadCenter {
                 $0.bytes = Storage.size(of: folder)
             }
             if let s = story(storyURL), !s.chapters.contains(where: { $0.state.isActive }) {
-                notify("اكتمل التحميل", s.title)
+                notify("اكتمل التحميل", "الملف جاهز في التحميلات")
             }
         } catch {
             if Task.isCancelled { return }

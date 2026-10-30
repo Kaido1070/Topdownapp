@@ -16,6 +16,11 @@ final class Auth {
         if let pw = defaults.string(forKey: "smokePassword"), !pw.isEmpty, Keychain.password == nil {
             try? await API.shared.login(password: pw)
         }
+        // اختبارات المحاكي تدخل التطبيق الحقيقي مباشرة، إلا سيناريوهات الواجهة الظاهرة
+        if defaults.string(forKey: "smokePassword") != nil,
+           defaults.string(forKey: "smokeTab")?.hasPrefix("decoy") != true {
+            AppModel.shared.reveal()
+        }
         switch defaults.string(forKey: "smokeTab") {
         case "stories": AppModel.shared.mode = .stories
         case "account": AppModel.shared.tab = .account
