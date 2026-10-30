@@ -33,7 +33,7 @@ targets:
     info:
       path: Topdown/Info.plist
       properties:
-        CFBundleDisplayName: محمّل الفيديو
+        CFBundleDisplayName: Topdown
         CFBundleDevelopmentRegion: ar
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
