@@ -348,6 +348,12 @@ enum Keychain {
         set { write("site-password", newValue) }
     }
 
+    /// ملح + بصمة كود التفعيل (لا يُحفظ الكود نفسه)
+    static var activationCode: String? {
+        get { read("activation-code") }
+        set { write("activation-code", newValue) }
+    }
+
     /// قيمة كوكي td_session (صالحة 30 يومًا، وتتجدد تلقائيًا بكلمة المرور).
     static var sessionToken: String? {
         get { read("session-token") }

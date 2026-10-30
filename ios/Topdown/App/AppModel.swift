@@ -50,7 +50,6 @@ final class AppModel {
     private var didLaunch = false
 
     private init() {
-        isLocked = UserDefaults.standard.bool(forKey: "appLock")
         monitor.pathUpdateHandler = { path in
             Task { @MainActor in AppModel.shared.networkChanged(path.status == .satisfied) }
         }
@@ -86,7 +85,6 @@ final class AppModel {
             if privacyBlur && !concealed { isObscured = true }
         case .background:
             if privacyBlur { isObscured = true }
-            if appLockEnabled { isLocked = true }
             // الواجهة الظاهرة تغطي فورًا حتى تظهر هي في مبدّل التطبيقات
             if !concealed { backgroundedAt = Date() }
             concealed = true

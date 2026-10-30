@@ -12,11 +12,10 @@ struct SettingsView: View {
     @State private var compressing = false
     @AppStorage("player.skipSeconds") private var skipSeconds = 85.0
     @AppStorage("notifyOnFinish") private var notify = true
-    @AppStorage("appLock") private var appLock = false
     @AppStorage("privacyBlur") private var privacyBlur = true
     @AppStorage("appearance") private var appearance = "dark"
     @AppStorage("stealth.grace") private var stealthGrace = 0.0
-    @AppStorage("stealth.faceID") private var stealthFaceID = false
+    @State private var changeCode = false
     @State private var confirmDelete = false
     @State private var confirmLogout = false
 
@@ -77,7 +76,6 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    Toggle("قفل التطبيق بـ Face ID", isOn: $appLock)
                     Toggle("إخفاء المحتوى في مبدّل التطبيقات", isOn: $privacyBlur)
                 } header: { Text("الخصوصية") }
                 Section {
@@ -88,9 +86,9 @@ struct SettingsView: View {
                         Text("بعد 5 دقائق").tag(300.0)
                         Text("بعد 15 دقيقة").tag(900.0)
                     }
-                    Toggle("Face ID بدل الرمز", isOn: $stealthFaceID)
+                    Button("تغيير كود التفعيل", systemImage: "key.fill") { changeCode = true }
                 } header: { Text("وضع التخفّي") } footer: {
-                    Text("التطبيق يظهر للجميع كمحمّل فيديو عادي. للدخول: الإعدادات ← اضغط على «الإصدار» 5 مرات متتالية ثم اكتب كلمة المرور.")
+                    Text("التطبيق يظهر للجميع كمحمّل فيديو عادي. للدخول: الإعدادات ← اضغط على «الإصدار» 5 مرات متتالية ثم اكتب كود التفعيل الذي اخترته.")
                 }
                 Section("المظهر") {
                     Picker("السمة", selection: $appearance) {
@@ -121,6 +119,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("الإعدادات")
+            .sheet(isPresented: $changeCode) { ChangeActivationCodeSheet() }
             .confirmationDialog("حذف كل التحميلات؟", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("حذف الكل", role: .destructive) { center.deleteEverything() }
             }

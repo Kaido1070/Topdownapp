@@ -1,6 +1,6 @@
 import SwiftUI
 import AVKit
-import LocalAuthentication
+import CryptoKit
 
 // MARK: - الستار: نافذة مستقلة فوق التطبيق الحقيقي
 
@@ -46,36 +46,77 @@ final class Curtain {
     }
 }
 
-// MARK: - التحقق من الرمز
+// MARK: - كود التفعيل
 
-enum StealthKey {
-    /// الرمز هو كلمة مرور الموقع: يُقارن محليًا إن كانت محفوظة، وإلا يُتحقق منه بتسجيل الدخول.
-    @MainActor
-    static func verify(_ code: String) async -> Result<Void, StealthError> {
-        let code = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !code.isEmpty else { return .failure(.wrong) }
-        if let saved = Keychain.password, !saved.isEmpty {
-            guard saved == code else { return .failure(.wrong) }
-            if Auth.shared.state == .signedOut, AppModel.shared.isOnline { try? await Auth.shared.login(code) }
-            return .success(())
-        }
-        guard AppModel.shared.isOnline else { return .failure(.offline) }
-        do {
-            try await Auth.shared.login(code)
-            return .success(())
-        } catch {
-            return .failure(.wrong)
-        }
+/// كود يختاره المستخدم بنفسه. لا يُحفظ نصّه أبدًا: نحفظ ملحًا عشوائيًا وبصمة مشتقة منه
+/// (SHA-256 مكرّرة) في Keychain، مع قفل متصاعد بعد المحاولات الخاطئة.
+enum ActivationCode {
+    static let minLength = 4
+    private static let rounds = 20_000
+    private static let freeAttempts = 5
+
+    static var isSet: Bool { Keychain.activationCode != nil }
+
+    static func set(_ code: String) {
+        var salt = [UInt8](repeating: 0, count: 16)
+        _ = SecRandomCopyBytes(kSecRandomDefault, salt.count, &salt)
+        let saltHex = salt.map { String(format: "%02x", $0) }.joined()
+        Keychain.activationCode = saltHex + ":" + digest(code, salt: saltHex)
+        resetFailures()
     }
 
-    enum StealthError: Error {
-        case wrong, offline
-        var message: String {
-            switch self {
-            case .wrong: "الرمز غير صحيح"
-            case .offline: "يلزم اتصال بالإنترنت"
-            }
+    static func matches(_ code: String) -> Bool {
+        guard let stored = Keychain.activationCode else { return false }
+        let parts = stored.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return false }
+        let candidate = Array(digest(code, salt: parts[0]).utf8)
+        let expected = Array(parts[1].utf8)
+        guard candidate.count == expected.count else { return false }
+        // مقارنة بزمن ثابت
+        return zip(candidate, expected).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
+    }
+
+    private static func digest(_ code: String, salt: String) -> String {
+        var data = Data((salt + ":" + code).utf8)
+        for _ in 0..<rounds { data = Data(SHA256.hash(data: data)) }
+        return data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    // MARK: القفل بعد المحاولات الخاطئة
+
+    private static let failsKey = "stealth.fails"
+    private static let lockKey = "stealth.lockUntil"
+
+    /// الثواني المتبقية قبل السماح بمحاولة جديدة
+    static var lockRemaining: Int {
+        let until = UserDefaults.standard.double(forKey: lockKey)
+        return max(0, Int(ceil(until - Date().timeIntervalSince1970)))
+    }
+
+    static func recordFailure() {
+        let fails = UserDefaults.standard.integer(forKey: failsKey) + 1
+        UserDefaults.standard.set(fails, forKey: failsKey)
+        guard fails >= freeAttempts else { return }
+        // دقيقة، ثم 2، 4، 8 … حتى ساعة
+        let seconds = min(3600.0, 60.0 * pow(2.0, Double(fails - freeAttempts)))
+        UserDefaults.standard.set(Date().timeIntervalSince1970 + seconds, forKey: lockKey)
+    }
+
+    static func resetFailures() {
+        UserDefaults.standard.removeObject(forKey: failsKey)
+        UserDefaults.standard.removeObject(forKey: lockKey)
+    }
+
+    /// أول مرة فقط (قبل اختيار الكود): نتأكد أنك صاحب الحساب بكلمة مرور الموقع
+    @MainActor
+    static func verifyAccountPassword(_ password: String) async -> String? {
+        let password = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !password.isEmpty else { return "غير صحيح" }
+        if let saved = Keychain.password, !saved.isEmpty {
+            return saved == password ? nil : "غير صحيح"
         }
+        guard AppModel.shared.isOnline else { return "يلزم اتصال بالإنترنت" }
+        do { try await Auth.shared.login(password); return nil } catch { return "غير صحيح" }
     }
 }
 
@@ -415,74 +456,128 @@ struct DecoySettings: View {
 struct SecretCodeSheet: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("stealth.faceID") private var useFaceID = false
-    @State private var code = ""
+
+    private enum Step { case enter, account, create, confirm }
+    @State private var step: Step = ActivationCode.isSet ? .enter : .account
+    @State private var text = ""
+    @State private var firstEntry = ""
     @State private var busy = false
     @State private var error: String?
     @State private var shake = 0
+    @State private var lockLeft = ActivationCode.lockRemaining
     @FocusState private var focused: Bool
+    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private var title: String {
+        switch step {
+        case .enter: "كود التفعيل"
+        case .account: "التفعيل لأول مرة"
+        case .create: "اختر كود التفعيل"
+        case .confirm: "أعد كتابة الكود"
+        }
+    }
+
+    private var hint: String? {
+        switch step {
+        case .account: "اكتب كلمة مرور حسابك مرة واحدة للتأكيد"
+        case .create: "\(ActivationCode.minLength) خانات أو أكثر — لا يعرفه أحد غيرك"
+        default: nil
+        }
+    }
 
     var body: some View {
-        VStack(spacing: 18) {
-            Text("رمز المطوّر").font(.headline).padding(.top, 24)
-            SecureField("الرمز", text: $code)
-                .textContentType(.password)
+        VStack(spacing: 16) {
+            Text(title).font(.headline).padding(.top, 24)
+            if let hint { Text(hint).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+            SecureField(step == .account ? "كلمة المرور" : "الكود", text: $text)
+                .textContentType(step == .create || step == .confirm ? .newPassword : .password)
                 .focused($focused)
                 .submitLabel(.go)
                 .onSubmit(submit)
                 .padding(14)
                 .background(.fill.tertiary, in: .rect(cornerRadius: 14))
                 .phaseAnimator([0, 1], trigger: shake) { v, p in v.offset(x: p == 1 ? 8 : 0) }
-            if let error {
+                .disabled(lockLeft > 0)
+            if lockLeft > 0 {
+                Text("محاولات كثيرة — انتظر \(lockLeft) ث").font(.footnote).foregroundStyle(.red).monospacedDigit()
+            } else if let error {
                 Text(error).font(.footnote).foregroundStyle(.red)
             }
             Button(action: submit) {
-                Group { if busy { ProgressView() } else { Text("تأكيد").font(.headline) } }
+                Group { if busy { ProgressView() } else { Text(step == .enter ? "تفعيل" : "متابعة").font(.headline) } }
                     .frame(maxWidth: .infinity, minHeight: 30)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(code.isEmpty || busy)
+            .disabled(text.isEmpty || busy || lockLeft > 0)
             Spacer()
         }
         .padding(.horizontal, 24)
+        .onReceive(tick) { _ in lockLeft = ActivationCode.lockRemaining }
         .onAppear {
+            focused = true
             #if DEBUG
             if UserDefaults.standard.string(forKey: "smokeTab") == "decoyUnlock",
                let pw = UserDefaults.standard.string(forKey: "smokePassword") {
-                code = pw
-                Task { try? await Task.sleep(for: .seconds(3)); submit() }
-                return
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    if step == .enter { text = "2468" } else { text = pw }
+                    submit()
+                    for code in ["2468", "2468"] {
+                        try? await Task.sleep(for: .seconds(2))
+                        guard step == .create || step == .confirm else { break }
+                        text = code
+                        submit()
+                    }
+                }
             }
             #endif
-            if useFaceID && Keychain.password != nil { faceID() } else { focused = true }
         }
     }
 
     private func submit() {
-        guard !code.isEmpty, !busy else { return }
-        busy = true
+        guard !text.isEmpty, !busy, ActivationCode.lockRemaining == 0 else { return }
+        let value = text
         error = nil
-        Task {
-            let result = await StealthKey.verify(code)
-            busy = false
-            switch result {
-            case .success: open()
-            case .failure(let e):
-                error = e.message
-                code = ""
-                shake += 1
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+        switch step {
+        case .enter:
+            busy = true
+            Task {
+                // الاشتقاق يأخذ لحظة؛ يُشغَّل خارج الواجهة
+                let ok = await Task.detached(priority: .userInitiated) { ActivationCode.matches(value) }.value
+                busy = false
+                if ok { ActivationCode.resetFailures(); open() } else { fail("الكود غير صحيح") }
+            }
+        case .account:
+            busy = true
+            Task {
+                let problem = await ActivationCode.verifyAccountPassword(value)
+                busy = false
+                if let problem { fail(problem) } else { text = ""; step = .create }
+            }
+        case .create:
+            guard value.count >= ActivationCode.minLength else { fail("الكود قصير"); return }
+            firstEntry = value
+            text = ""
+            step = .confirm
+        case .confirm:
+            guard value == firstEntry else { firstEntry = ""; step = .create; fail("غير متطابق — أعد المحاولة"); return }
+            busy = true
+            Task {
+                await Task.detached(priority: .userInitiated) { ActivationCode.set(value) }.value
+                busy = false
+                open()
             }
         }
     }
 
-    private func faceID() {
-        let ctx = LAContext()
-        guard ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else { focused = true; return }
-        ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "تأكيد الهوية") { ok, _ in
-            Task { @MainActor in if ok { open() } else { focused = true } }
-        }
+    private func fail(_ message: String) {
+        if step == .enter || step == .account { ActivationCode.recordFailure() }
+        lockLeft = ActivationCode.lockRemaining
+        error = message
+        text = ""
+        shake += 1
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
     }
 
     private func open() {
@@ -491,6 +586,43 @@ struct SecretCodeSheet: View {
         Task {
             try? await Task.sleep(for: .milliseconds(350))
             app.reveal()
+        }
+    }
+}
+
+/// تغيير الكود من داخل التطبيق الحقيقي
+struct ChangeActivationCodeSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var code = ""
+    @State private var again = ""
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("الكود الجديد", text: $code).textContentType(.newPassword)
+                    SecureField("أعد كتابته", text: $again).textContentType(.newPassword)
+                } footer: {
+                    Text(error ?? "\(ActivationCode.minLength) خانات أو أكثر. لا يُحفظ الكود نفسه على الجهاز، فقط بصمة مشفّرة منه.")
+                        .foregroundStyle(error == nil ? Color.secondary : Color.red)
+                }
+            }
+            .navigationTitle("كود التفعيل")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("إلغاء") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("حفظ") {
+                        guard code.count >= ActivationCode.minLength else { error = "الكود قصير"; return }
+                        guard code == again else { error = "غير متطابق"; return }
+                        ActivationCode.set(code)
+                        AppModel.shared.show("تم حفظ كود التفعيل")
+                        dismiss()
+                    }
+                    .disabled(code.isEmpty)
+                }
+            }
         }
     }
 }
