@@ -152,6 +152,10 @@ jobs:
           sleep 12; xcrun simctl io "$UDID" screenshot shots/11-decoy-code.png
           xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab decoyUnlock
           sleep 25; xcrun simctl io "$UDID" screenshot shots/12-decoy-unlocked.png
+          xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab decoyTikTok
+          sleep 30; xcrun simctl io "$UDID" screenshot shots/13-decoy-tiktok.png
+          xcrun simctl launch --terminate-running-process "$UDID" com.topdown.app $ARGS -smokeTab decoyYouTube
+          sleep 40; xcrun simctl io "$UDID" screenshot shots/14-decoy-youtube.png
           pgrep -fl Topdown.app || { echo "APP NOT RUNNING (crash?)"; exit 1; }
           grep -E "story/chapter|stories\?|/api/story\?" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | tail -20 || true
           grep -E "GET /api|POST /api" backend.log | sed -E 's/\x1b\[[0-9;]*m//g' | sed -E 's/\?.*( [0-9]{3} )/\1/' | sort | uniq -c | sort -rn | head -40

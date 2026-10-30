@@ -49,11 +49,10 @@ final class Curtain {
 // MARK: - كود التفعيل
 
 /// كود يختاره المستخدم بنفسه. لا يُحفظ نصّه أبدًا: نحفظ ملحًا عشوائيًا وبصمة مشتقة منه
-/// (SHA-256 مكرّرة) في Keychain، مع قفل متصاعد بعد المحاولات الخاطئة.
+/// (SHA-256 مكرّرة) في Keychain.
 enum ActivationCode {
     static let minLength = 4
     private static let rounds = 20_000
-    private static let freeAttempts = 5
 
     static var isSet: Bool { Keychain.activationCode != nil }
 
@@ -82,29 +81,20 @@ enum ActivationCode {
         return data.map { String(format: "%02x", $0) }.joined()
     }
 
-    // MARK: القفل بعد المحاولات الخاطئة
+    // MARK: المحاولات الخاطئة (بدون أي إيقاف — بعد 10 يظهر «نسيت الكود»)
 
+    static let forgotAfter = 10
     private static let failsKey = "stealth.fails"
-    private static let lockKey = "stealth.lockUntil"
 
-    /// الثواني المتبقية قبل السماح بمحاولة جديدة
-    static var lockRemaining: Int {
-        let until = UserDefaults.standard.double(forKey: lockKey)
-        return max(0, Int(ceil(until - Date().timeIntervalSince1970)))
-    }
+    static var failures: Int { UserDefaults.standard.integer(forKey: failsKey) }
 
     static func recordFailure() {
-        let fails = UserDefaults.standard.integer(forKey: failsKey) + 1
-        UserDefaults.standard.set(fails, forKey: failsKey)
-        guard fails >= freeAttempts else { return }
-        // دقيقة، ثم 2، 4، 8 … حتى ساعة
-        let seconds = min(3600.0, 60.0 * pow(2.0, Double(fails - freeAttempts)))
-        UserDefaults.standard.set(Date().timeIntervalSince1970 + seconds, forKey: lockKey)
+        UserDefaults.standard.set(failures + 1, forKey: failsKey)
     }
 
     static func resetFailures() {
         UserDefaults.standard.removeObject(forKey: failsKey)
-        UserDefaults.standard.removeObject(forKey: lockKey)
+        UserDefaults.standard.removeObject(forKey: "stealth.lockUntil")
     }
 
     /// أول مرة فقط (قبل اختيار الكود): نتأكد أنك صاحب الحساب بكلمة مرور الموقع
@@ -139,7 +129,7 @@ final class DecoyStore {
     var busy = false
     var progress: Double = 0
     var message: String?
-    @ObservationIgnored private var activeTask: URLSessionDownloadTask?
+    var status: String?
 
     static let folder = URL.documentsDirectory.appending(path: "Saved", directoryHint: .isDirectory)
     private static let videoExtensions: Set<String> = ["mp4", "mov", "m4v", "webm", "mkv", "3gp"]
@@ -160,55 +150,86 @@ final class DecoyStore {
 
     var totalSize: Int64 { files.reduce(0) { $0 + $1.size } }
 
+    /// أول رابط داخل النص (المشاركة من تيك توك تضيف كلامًا قبل الرابط)
+    static func firstLink(in text: String) -> URL? {
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        let range = NSRange(text.startIndex..., in: text)
+        return detector?.matches(in: text, range: range).compactMap(\.url)
+            .first { ["http", "https"].contains($0.scheme?.lowercased() ?? "") }
+    }
+
+    private var maxHeight: Int {
+        switch UserDefaults.standard.string(forKey: "decoy.quality") {
+        case "medium": 720
+        case "low": 360
+        default: 1080
+        }
+    }
+
     func download(_ text: String) async {
         message = nil
-        guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+        guard let url = Self.firstLink(in: text) else {
             message = "الرابط غير صالح"
             return
         }
         busy = true
         progress = 0
-        defer { busy = false }
+        status = "جارٍ قراءة الرابط…"
+        defer { busy = false; status = nil }
         let fm = FileManager.default
-        let watcher = Task { @MainActor in
-            while !Task.isCancelled {
-                if let t = activeTask { progress = t.progress.fractionCompleted }
-                try? await Task.sleep(for: .milliseconds(300))
-            }
-        }
-        defer { watcher.cancel(); activeTask = nil }
+        var temps: [URL] = []
+        defer { temps.forEach { try? fm.removeItem(at: $0) } }
         do {
-            let (tmp, response): (URL, URLResponse) = try await withCheckedThrowingContinuation { cont in
-                let t = URLSession.shared.downloadTask(with: url) { location, response, error in
-                    guard let location, let response else {
-                        cont.resume(throwing: error ?? URLError(.badServerResponse)); return
-                    }
-                    // الملف المؤقت يُحذف بعد هذه الدالة، ننقله فورًا
-                    let keep = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-                    do { try FileManager.default.moveItem(at: location, to: keep); cont.resume(returning: (keep, response)) }
-                    catch { cont.resume(throwing: error) }
+            let source: VideoGrabber.Source
+            switch VideoGrabber.kind(of: url) {
+            case .youtube(let id): source = try await VideoGrabber.youtube(id, maxHeight: maxHeight)
+            case .tiktok: source = try await VideoGrabber.tiktok(url)
+            case .direct:
+                let base = url.deletingPathExtension().lastPathComponent
+                source = VideoGrabber.Source(title: base.isEmpty || base == "/" ? "video" : base, video: url)
+            }
+            status = source.title
+            // الفيديو 90٪ من الشريط والصوت الباقي
+            let share = source.audio == nil ? 1.0 : 0.9
+            let video = try await VideoGrabber.fetch(source.video, headers: source.headers, chunked: source.chunked,
+                                                     length: source.videoLength) { p in
+                Task { @MainActor in DecoyStore.shared.progress = p * share }
+            }
+            temps.append(video)
+            if case .direct = VideoGrabber.kind(of: url) {
+                let ext = url.pathExtension.lowercased()
+                guard Self.videoExtensions.contains(ext) || Self.looksLikeVideo(video) else {
+                    message = "هذا الرابط لا يحتوي فيديو. الصق رابط يوتيوب أو تيك توك أو رابط ملف فيديو."
+                    return
                 }
-                activeTask = t
-                t.resume()
             }
-            let mime = (response.mimeType ?? "").lowercased()
-            let ext = url.pathExtension.lowercased()
-            guard mime.hasPrefix("video/") || Self.videoExtensions.contains(ext) else {
-                try? fm.removeItem(at: tmp)
-                message = "هذا الرابط لا يحتوي فيديو مباشر. انسخ رابط ملف الفيديو نفسه."
-                return
+            let target = uniqueURL(name: VideoGrabber.safeName(source.title), ext: "mp4")
+            if let audioURL = source.audio {
+                let audio = try await VideoGrabber.fetch(audioURL, headers: source.headers, chunked: source.chunked,
+                                                         length: source.audioLength) { p in
+                    Task { @MainActor in DecoyStore.shared.progress = 0.9 + p * 0.1 }
+                }
+                temps.append(audio)
+                status = "دمج الصوت مع الفيديو…"
+                try await VideoGrabber.mux(video: video, audio: audio, to: target)
+            } else {
+                try fm.moveItem(at: video, to: target)
             }
-            let base = url.deletingPathExtension().lastPathComponent
-            let target = uniqueURL(name: base.isEmpty || base == "/" ? "video" : base,
-                                   ext: Self.videoExtensions.contains(ext) ? ext : "mp4")
-            try fm.moveItem(at: tmp, to: target)
             progress = 1
             message = "تم الحفظ — تجده في «الملفات»"
             reload()
         } catch {
             message = "تعذّر التنزيل: " + error.localizedDescription
         }
+    }
+
+    /// فحص بسيط لترويسة الملف (mp4/mov: ftyp، webm/mkv: EBML)
+    private static func looksLikeVideo(_ file: URL) -> Bool {
+        guard let h = try? FileHandle(forReadingFrom: file) else { return false }
+        defer { try? h.close() }
+        let head = (try? h.read(upToCount: 12)) ?? Data()
+        if head.count >= 8, String(data: head[4..<8], encoding: .ascii) == "ftyp" { return true }
+        return head.starts(with: [0x1A, 0x45, 0xDF, 0xA3])
     }
 
     func delete(_ file: DecoyFile) {
@@ -243,7 +264,7 @@ struct DecoyRoot: View {
         }
         .onAppear {
             #if DEBUG
-            if UserDefaults.standard.string(forKey: "smokeTab")?.hasPrefix("decoy") == true { tab = 2 }
+            if ["decoy", "decoyUnlock"].contains(UserDefaults.standard.string(forKey: "smokeTab") ?? "") { tab = 2 }
             #endif
         }
     }
@@ -263,6 +284,13 @@ struct DecoyHome: View {
                         .foregroundStyle(.blue.gradient)
                         .padding(.top, 24)
                     Text("الصق رابط الفيديو للتنزيل").font(.title3.bold())
+                    HStack(spacing: 8) {
+                        ForEach(["يوتيوب", "تيك توك", "روابط مباشرة"], id: \.self) { t in
+                            Text(t).font(.caption.weight(.medium))
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .background(.fill.tertiary, in: .capsule)
+                        }
+                    }
 
                     HStack(spacing: 10) {
                         TextField("https://", text: $link)
@@ -301,13 +329,22 @@ struct DecoyHome: View {
                     .controlSize(.large)
                     .disabled(link.isEmpty || store.busy)
 
+                    if store.busy {
+                        VStack(spacing: 4) {
+                            if let st = store.status { Text(st).font(.footnote).lineLimit(2) }
+                            if store.progress > 0 {
+                                Text("\(Int(store.progress * 100))٪").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                            }
+                        }
+                        .multilineTextAlignment(.center)
+                    }
                     if let m = store.message {
                         Text(m).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
 
                     VStack(alignment: .leading, spacing: 14) {
                         Text("طريقة الاستخدام").font(.headline)
-                        step(1, "انسخ رابط الفيديو من المتصفح.")
+                        step(1, "من يوتيوب أو تيك توك: مشاركة ← نسخ الرابط.")
                         step(2, "الصق الرابط في الخانة بالأعلى.")
                         step(3, "اضغط «تنزيل» وستجد الفيديو في «الملفات».")
                     }
@@ -319,6 +356,16 @@ struct DecoyHome: View {
             }
             .navigationTitle("محمّل الفيديو")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                #if DEBUG
+                let links = ["decoyTikTok": "https://www.tiktok.com/@tiktok/video/7106594312292453675",
+                             "decoyYouTube": "https://youtu.be/jNQXAC9IVRw"]
+                if let l = links[UserDefaults.standard.string(forKey: "smokeTab") ?? ""], link.isEmpty {
+                    link = l
+                    Task { await store.download(l) }
+                }
+                #endif
+            }
         }
     }
 
@@ -432,11 +479,11 @@ struct DecoySettings: View {
             }
             .sheet(isPresented: $askCode) {
                 SecretCodeSheet()
-                    .presentationDetents([.height(300)])
+                    .presentationDetents([.height(360)])
             }
             .onAppear {
                 #if DEBUG
-                if UserDefaults.standard.string(forKey: "smokeTab")?.hasPrefix("decoy") == true { askCode = true }
+                if ["decoy", "decoyUnlock"].contains(UserDefaults.standard.string(forKey: "smokeTab") ?? "") { askCode = true }
                 #endif
             }
         }
@@ -457,29 +504,31 @@ struct SecretCodeSheet: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
+    /// enter: الكود · account: كلمة مرور الحساب (أول مرة أو «نسيت الكود») · create/confirm: كود جديد
     private enum Step { case enter, account, create, confirm }
     @State private var step: Step = ActivationCode.isSet ? .enter : .account
+    @State private var forgot = false
+    @State private var changing = false
     @State private var text = ""
     @State private var firstEntry = ""
     @State private var busy = false
     @State private var error: String?
     @State private var shake = 0
-    @State private var lockLeft = ActivationCode.lockRemaining
+    @State private var failures = ActivationCode.failures
     @FocusState private var focused: Bool
-    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var title: String {
         switch step {
-        case .enter: "كود التفعيل"
-        case .account: "التفعيل لأول مرة"
-        case .create: "اختر كود التفعيل"
+        case .enter: changing ? "اكتب الكود الحالي" : "كود التفعيل"
+        case .account: forgot ? "نسيت الكود" : "التفعيل لأول مرة"
+        case .create: "اختر كود التفعيل الجديد"
         case .confirm: "أعد كتابة الكود"
         }
     }
 
     private var hint: String? {
         switch step {
-        case .account: "اكتب كلمة مرور حسابك مرة واحدة للتأكيد"
+        case .account: "اكتب كلمة مرور حسابك للتأكد أنك صاحبه"
         case .create: "\(ActivationCode.minLength) خانات أو أكثر — لا يعرفه أحد غيرك"
         default: nil
         }
@@ -497,23 +546,37 @@ struct SecretCodeSheet: View {
                 .padding(14)
                 .background(.fill.tertiary, in: .rect(cornerRadius: 14))
                 .phaseAnimator([0, 1], trigger: shake) { v, p in v.offset(x: p == 1 ? 8 : 0) }
-                .disabled(lockLeft > 0)
-            if lockLeft > 0 {
-                Text("محاولات كثيرة — انتظر \(lockLeft) ث").font(.footnote).foregroundStyle(.red).monospacedDigit()
-            } else if let error {
+            if let error {
                 Text(error).font(.footnote).foregroundStyle(.red)
             }
             Button(action: submit) {
-                Group { if busy { ProgressView() } else { Text(step == .enter ? "تفعيل" : "متابعة").font(.headline) } }
+                Group { if busy { ProgressView() } else { Text(step == .enter && !changing ? "تفعيل" : "متابعة").font(.headline) } }
                     .frame(maxWidth: .infinity, minHeight: 30)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(text.isEmpty || busy || lockLeft > 0)
+            .disabled(text.isEmpty || busy)
+
+            if step == .enter {
+                HStack {
+                    Button(changing ? "إلغاء التغيير" : "تغيير الكود") {
+                        changing.toggle(); error = nil; text = ""; focused = true
+                    }
+                    Spacer()
+                    if failures >= ActivationCode.forgotAfter {
+                        Button("نسيت الكود؟") {
+                            forgot = true; changing = false; error = nil; text = ""; step = .account; focused = true
+                        }
+                        .fontWeight(.semibold)
+                    }
+                }
+                .font(.footnote)
+            }
             Spacer()
         }
         .padding(.horizontal, 24)
-        .onReceive(tick) { _ in lockLeft = ActivationCode.lockRemaining }
+        .animation(.smooth, value: step)
+        .animation(.smooth, value: failures)
         .onAppear {
             focused = true
             #if DEBUG
@@ -536,7 +599,7 @@ struct SecretCodeSheet: View {
     }
 
     private func submit() {
-        guard !text.isEmpty, !busy, ActivationCode.lockRemaining == 0 else { return }
+        guard !text.isEmpty, !busy else { return }
         let value = text
         error = nil
         switch step {
@@ -546,7 +609,10 @@ struct SecretCodeSheet: View {
                 // الاشتقاق يأخذ لحظة؛ يُشغَّل خارج الواجهة
                 let ok = await Task.detached(priority: .userInitiated) { ActivationCode.matches(value) }.value
                 busy = false
-                if ok { ActivationCode.resetFailures(); open() } else { fail("الكود غير صحيح") }
+                guard ok else { fail("الكود غير صحيح"); return }
+                ActivationCode.resetFailures()
+                failures = 0
+                if changing { text = ""; step = .create } else { open() }
             }
         case .account:
             busy = true
@@ -566,14 +632,17 @@ struct SecretCodeSheet: View {
             Task {
                 await Task.detached(priority: .userInitiated) { ActivationCode.set(value) }.value
                 busy = false
+                failures = 0
                 open()
             }
         }
     }
 
     private func fail(_ message: String) {
-        if step == .enter || step == .account { ActivationCode.recordFailure() }
-        lockLeft = ActivationCode.lockRemaining
+        if step == .enter {
+            ActivationCode.recordFailure()
+            failures = ActivationCode.failures
+        }
         error = message
         text = ""
         shake += 1
