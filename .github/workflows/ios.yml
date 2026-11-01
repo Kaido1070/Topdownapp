@@ -94,8 +94,15 @@ jobs:
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build-sim \
             CODE_SIGNING_ALLOWED=NO build > sim.log 2>&1 || { grep -E "error:" -A3 sim.log | head -200; exit 1; }
       - name: Start local Topdown backend
+        env:
+          SITE_REPO_TOKEN: ${{ secrets.SITE_REPO_TOKEN }}
         run: |
-          git clone --depth 1 https://github.com/Kaido1070/topdown backend
+          # المستودع خاص: يُستخدم SITE_REPO_TOKEN (قراءة فقط) إن وُجد
+          if [ -n "$SITE_REPO_TOKEN" ]; then
+            git clone --depth 1 "https://x-access-token:${SITE_REPO_TOKEN}@github.com/Kaido1070/topdown" backend
+          else
+            git clone --depth 1 https://github.com/Kaido1070/topdown backend
+          fi
           cd backend
           mkdir -p dist && echo ok > dist/index.html
           printf 'TOPDOWN_PASSWORD=testpass\nSESSION_SECRET=testsecret\n' > .dev.vars

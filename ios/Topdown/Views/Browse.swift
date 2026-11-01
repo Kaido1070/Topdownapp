@@ -346,13 +346,25 @@ struct StoryGrid: View {
                 }
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 14)], spacing: 18) {
-                ForEach(feed.sorted) { item in
+                let list = feed.sorted
+                ForEach(Array(list.enumerated()), id: \.element.id) { i, item in
                     StoryCardView(item: item)
-                        .onAppear { if item.url == feed.items.last?.url { Task { await feed.loadMore() } } }
+                        // نطلب الصفحة التالية قبل الوصول للنهاية بقليل
+                        .onAppear { if i >= list.count - 6 { feed.requestMore() } }
                 }
             }
             .padding(.horizontal)
-            if feed.loadingMore { ProgressView().padding() }
+            if feed.hasNext && !feed.items.isEmpty {
+                Group {
+                    if feed.loadingMore {
+                        ProgressView().padding()
+                    } else {
+                        Button("تحميل المزيد", systemImage: "arrow.down.circle") { feed.requestMore() }
+                            .buttonStyle(.glass)
+                            .padding()
+                    }
+                }
+            }
         }
         // ضمان إضافي: إذا ظهرت الشبكة ولم يبدأ أي تحميل، نبدأه هنا (مرة واحدة على الحاوية)
         .onAppear { feed.start() }

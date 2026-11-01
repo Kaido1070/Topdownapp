@@ -213,7 +213,8 @@ enum AnimeSource: String, CaseIterable, Identifiable {
 }
 
 enum StorySource: String, CaseIterable, Identifiable {
-    case all, legacy, arabtoons, arabtaku, hentaislayer
+    // HentaiSlayer أُزيل: أغلب قصصه فصل واحد فقط
+    case all, legacy, arabtoons, arabtaku
     var id: String { rawValue }
     var name: String {
         switch self {
@@ -221,7 +222,6 @@ enum StorySource: String, CaseIterable, Identifiable {
         case .legacy: "المصدر القديم"
         case .arabtoons: "ArabToons"
         case .arabtaku: "Arabtaku"
-        case .hentaislayer: "HentaiSlayer"
         }
     }
     static var concrete: [StorySource] { allCases.filter { $0 != .all } }

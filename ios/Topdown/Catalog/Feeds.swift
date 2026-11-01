@@ -31,6 +31,7 @@ final class AnimeFeed {
 
     func reload() async {
         generation += 1
+        pendingMore = false
         let gen = generation
         loading = true
         errors = []
@@ -191,6 +192,7 @@ final class StoryFeed {
 
     func reload() async {
         generation += 1
+        pendingMore = false
         page = 1
         exhausted = []
         sourceStatus = [:]
@@ -199,9 +201,18 @@ final class StoryFeed {
     }
 
     func loadMore() async {
-        guard !loading, !loadingMore, hasNext else { return }
+        guard hasNext else { return }
+        // طلب أثناء تحميل جارٍ لا يضيع: يُنفَّذ فور انتهائه
+        guard !loading, !loadingMore else { pendingMore = true; return }
         await fetch(page: page + 1, append: true)
     }
+
+    /// يطلب الصفحة التالية من الكتالوج نفسه (لا يُلغى إذا اختفت البطاقة من الشاشة)
+    func requestMore() {
+        Task { [weak self] in await self?.loadMore() }
+    }
+
+    @ObservationIgnored private var pendingMore = false
 
     /// سجل مختصر لما حدث أثناء التحميل (يظهر في «فحص المصادر»).
     private(set) var log: [String] = []
@@ -211,8 +222,9 @@ final class StoryFeed {
         if log.count > 40 { log.removeFirst(log.count - 40) }
     }
 
-    private func fetch(page p: Int, append: Bool) async {
+    private func fetch(page p: Int, append: Bool, skips: Int = 0) async {
         let gen = generation
+        let before = items.count
         if append { loadingMore = true } else { loading = true; errors = [] }
         defer {
             if gen == generation { loading = false; loadingMore = false }
@@ -258,6 +270,16 @@ final class StoryFeed {
         hasNext = anyNext
         didLoad = true
         note("انتهى: \(items.count) قصة")
+
+        // صفحة لم تضف جديدًا (تكرار) أو طلب انتظر انتهاء التحميل: نكمل للتالية مباشرة
+        if gen == generation, hasNext, skips < 3, pendingMore || (append && items.count == before) {
+            pendingMore = false
+            loading = false
+            loadingMore = false
+            await fetch(page: p + 1, append: true, skips: items.count == before ? skips + 1 : 0)
+            return
+        }
+        pendingMore = false
 
         // لم يصل شيء والمصادر لم ترجع خطأ: نعيد المحاولة تلقائيًا
         if !append, items.isEmpty, newErrors.isEmpty, autoRetries < 2 {
