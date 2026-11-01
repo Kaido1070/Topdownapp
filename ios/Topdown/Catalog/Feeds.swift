@@ -31,7 +31,6 @@ final class AnimeFeed {
 
     func reload() async {
         generation += 1
-        pendingMore = false
         let gen = generation
         loading = true
         errors = []
