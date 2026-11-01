@@ -22,6 +22,8 @@ struct ReaderScreen: View {
     @State private var chapterQuery = ""
     @State private var initialPage = 0
     @State private var ready = false
+    /// الانتقال لفصل آخر من داخل القارئ يبدأ دائمًا من أول صفحة
+    @State private var startAtTop = false
 
     @AppStorage("reader.keepAwake") private var keepAwake = true
     @AppStorage("reader.dim") private var dim = 0.0
@@ -128,6 +130,14 @@ struct ReaderScreen: View {
         .preferredColorScheme(.dark)
         .environment(\.layoutDirection, .rightToLeft)
         .task(id: url) { await load() }
+        #if DEBUG
+        .task {
+            // اختبار المحاكي: الانتقال للفصل التالي من آخر صفحة يجب أن يبدأ من أوله
+            guard UserDefaults.standard.string(forKey: "smokeTab") == "readerNext" else { return }
+            try? await Task.sleep(for: .seconds(14))
+            if let n = next { open(n) }
+        }
+        #endif
         .onAppear { UIApplication.shared.isIdleTimerDisabled = keepAwake }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .onChange(of: keepAwake) { _, v in UIApplication.shared.isIdleTimerDisabled = v }
@@ -262,6 +272,12 @@ struct ReaderScreen: View {
         Haptics.tap()
         direction = ReaderScrollDirection()
         withAnimation(.easeInOut(duration: 0.22)) { controls = true }
+        // نُخفي صفحات الفصل الحالي فورًا، وإلا يُبنى عارض الفصل الجديد بها ويحفظ آخر صفحة كموضع له
+        ready = false
+        images = []
+        initialPage = 0
+        page = 0
+        startAtTop = true
         url = link.url
     }
 
@@ -296,7 +312,7 @@ struct ReaderScreen: View {
         page = 0
         if request.recordHistory { library.recordRead(request.story, chapter: current) }
         if let local {
-            initialPage = min(max(0, local.lastReadPage), max(0, local.pages.count - 1))
+            initialPage = startAtTop ? 0 : min(max(0, local.lastReadPage), max(0, local.pages.count - 1))
             page = initialPage
             ready = true
             return
@@ -306,7 +322,7 @@ struct ReaderScreen: View {
             if let cached = ChapterPrefetch.take(url) { loaded = cached } else { loaded = try await API.shared.chapter(url).images }
             guard !Task.isCancelled else { return }
             images = loaded
-            initialPage = min(ReaderPositions.page(for: url), max(0, loaded.count - 1))
+            initialPage = startAtTop ? 0 : min(ReaderPositions.page(for: url), max(0, loaded.count - 1))
             page = initialPage
             ready = true
         } catch {

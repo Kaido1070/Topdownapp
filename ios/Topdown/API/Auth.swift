@@ -24,7 +24,7 @@ final class Auth {
         switch defaults.string(forKey: "smokeTab") {
         case "stories": AppModel.shared.mode = .stories
         case "account": AppModel.shared.tab = .account
-        case "reader":
+        case "reader", "readerNext":
             Task {
                 guard let page = try? await API.shared.stories(page: 1, q: "", genre: "", source: .legacy),
                       let first = page.items.values.first,
