@@ -52,6 +52,8 @@ struct ProPlayer: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var seekFlash: (forward: Bool, id: Int)?
     @State private var fill = false
+    @State private var lastTap: (time: Date, forward: Bool)?
+    @State private var seekStreak: (until: Date, forward: Bool)?
     @AppStorage("player.skipSeconds") private var skipSeconds = 85.0
 
     var body: some View {
@@ -119,19 +121,15 @@ struct ProPlayer: View {
     private func gestureLayer(width: CGFloat) -> some View {
         Color.clear
             .contentShape(.rect)
-            .onTapGesture(count: 2, coordinateSpace: .local) { p in
-                guard !locked else { return }
-                let forward = p.x > width / 2
-                model.skip(forward ? 10 : -10)
-                seekFlash = (forward, (seekFlash?.id ?? 0) + 1)
-                let id = seekFlash?.id
-                Task { try? await Task.sleep(for: .milliseconds(650)); if seekFlash?.id == id { seekFlash = nil } }
-            }
-            .onTapGesture { if !locked { toggleControls() } else { controls.toggle() } }
-            .onLongPressGesture(minimumDuration: 0.35, perform: {}, onPressingChanged: { pressing in
-                guard !locked, model.isPlaying || model.holdBoost else { return }
-                model.holdBoost = pressing
-                if pressing { Haptics.tap() }
+            // لمسة واحدة تُظهر/تخفي الأدوات فورًا؛ لمستان سريعتان تقدّم/ترجع 10 ث (وكل لمسة إضافية 10 أخرى)
+            .onTapGesture(coordinateSpace: .local) { p in handleTap(at: p, width: width) }
+            // ×2 فقط بعد الضغط المطوّل فعلًا — اللمسة العادية لا تغيّر السرعة ولا تهتز
+            .onLongPressGesture(minimumDuration: 0.4, perform: {
+                guard !locked, model.isPlaying else { return }
+                model.holdBoost = true
+                Haptics.tap()
+            }, onPressingChanged: { pressing in
+                if !pressing && model.holdBoost { model.holdBoost = false }
             })
             .gesture(MagnifyGesture().onEnded { v in
                 guard fullscreen else { return }
@@ -153,7 +151,7 @@ struct ProPlayer: View {
                 Spacer()
                 bottomBar
             }
-            .padding(fullscreen ? 20 : 12)
+            .padding(fullscreen ? 20 : 10)
         }
     }
 
@@ -163,7 +161,8 @@ struct ProPlayer: View {
                 circleButton("chevron.down", action: onClose)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.item.title).font(.subheadline.bold()).lineLimit(1)
+                // العنوان يظهر تحت المشغّل في الوضع العادي، فلا نكرّره داخله
+                if fullscreen { Text(model.item.title).font(.subheadline.bold()).lineLimit(1) }
                 if let r = model.resumedFrom, model.current - r < 6 {
                     Text("متابعة من " + format(r)).font(.caption2).foregroundStyle(.white.opacity(0.75))
                 } else if model.isLocal {
@@ -182,23 +181,23 @@ struct ProPlayer: View {
     }
 
     private var centerControls: some View {
-        HStack(spacing: fullscreen ? 56 : 34) {
+        HStack(spacing: fullscreen ? 56 : 28) {
             if model.previousItem != nil {
-                bigButton("backward.end.fill", size: 22) { model.playPrevious() }
+                bigButton("backward.end.fill", size: fullscreen ? 22 : 18) { model.playPrevious() }
             }
-            bigButton("gobackward.10", size: 26) { model.skip(-10); scheduleHide() }
+            bigButton("gobackward.10", size: fullscreen ? 26 : 22) { model.skip(-10); scheduleHide() }
             Button { model.toggle(); scheduleHide() } label: {
                 Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.system(size: fullscreen ? 34 : 26, weight: .bold))
                     .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 74, height: 74)
+                    .frame(width: fullscreen ? 74 : 56, height: fullscreen ? 74 : 56)
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
             .tint(.white)
-            bigButton("goforward.10", size: 26) { model.skip(10); scheduleHide() }
+            bigButton("goforward.10", size: fullscreen ? 26 : 22) { model.skip(10); scheduleHide() }
             if model.nextItem != nil {
-                bigButton("forward.end.fill", size: 22) { model.playNext() }
+                bigButton("forward.end.fill", size: fullscreen ? 22 : 18) { model.playNext() }
             }
         }
         .foregroundStyle(.white)
@@ -206,31 +205,52 @@ struct ProPlayer: View {
 
     private var bottomBar: some View {
         VStack(spacing: 8) {
-            Scrubber(value: scrubbing ? scrubValue : model.current,
-                     buffered: model.buffered, duration: max(model.duration, 1)) { editing, v in
-                scrubbing = editing
-                scrubValue = v
-                if !editing { model.seek(to: v, precise: true); scheduleHide() } else { hideTask?.cancel() }
-            }
-            HStack {
-                Text(format(scrubbing ? scrubValue : model.current))
-                Text("/").opacity(0.5)
-                Text(format(model.duration)).opacity(0.8)
-                Spacer()
-                if model.rate != 1 {
-                    Text("×" + String(format: "%g", model.rate)).font(.caption.bold())
-                        .padding(.horizontal, 8).padding(.vertical, 3).glassEffect(.regular, in: .capsule)
+            if model.duration > 0 {
+                Scrubber(value: scrubbing ? scrubValue : model.current,
+                         buffered: model.buffered, duration: model.duration) { editing, v in
+                    scrubbing = editing
+                    scrubValue = v
+                    if !editing { model.seek(to: v, precise: true); scheduleHide() } else { hideTask?.cancel() }
                 }
+            }
+            HStack(spacing: 8) {
+                Text(format(scrubbing ? scrubValue : model.current))
+                if model.duration > 0 {
+                    Text("/").opacity(0.5)
+                    Text(format(model.duration)).opacity(0.8)
+                }
+                Spacer()
+                speedMenu
                 if model.quality.height > 0 {
                     Text(model.quality.label).font(.caption.bold())
                         .padding(.horizontal, 8).padding(.vertical, 3).glassEffect(.regular, in: .capsule)
                 }
-                circleButton("lock.fill") { locked = true; controls = false; Haptics.tap() }
+                if fullscreen {
+                    circleButton("lock.fill") { locked = true; controls = false }
+                }
                 circleButton(fullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", action: onFullscreen)
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.white)
         }
+    }
+
+    /// السرعة بضغطة واحدة من الشريط السفلي
+    private var speedMenu: some View {
+        Menu {
+            Picker("السرعة", selection: Binding(get: { model.rate }, set: { model.rate = $0; scheduleHide() })) {
+                ForEach([2, 1.75, 1.5, 1.25, 1, 0.75, 0.5] as [Float], id: \.self) { r in
+                    Text(r == 1 ? "عادي ×1" : "×" + String(format: "%g", r)).tag(r)
+                }
+            }
+        } label: {
+            Text("×" + String(format: "%g", model.rate))
+                .font(.caption.bold().monospacedDigit())
+                .foregroundStyle(model.rate == 1 ? Color.white : Theme.accent)
+                .frame(minWidth: 44, minHeight: 34)
+                .glassEffect(.regular.interactive(), in: .capsule)
+        }
+        .menuOrder(.fixed)
     }
 
     private var optionsMenu: some View {
@@ -317,7 +337,7 @@ struct ProPlayer: View {
     private var lockOverlay: some View {
         VStack {
             if controls {
-                Button { locked = false; controls = true; scheduleHide(); Haptics.tap() } label: {
+                Button { locked = false; controls = true; scheduleHide() } label: {
                     Label("فتح القفل", systemImage: "lock.open.fill").font(.subheadline.bold())
                         .padding(.horizontal, 16).padding(.vertical, 10)
                 }
@@ -363,6 +383,33 @@ struct ProPlayer: View {
         .contentShape(.circle)
     }
 
+    private func handleTap(at p: CGPoint, width: CGFloat) {
+        let now = Date()
+        let forward = p.x > width / 2
+        if locked { controls.toggle(); return }
+        // سلسلة تقديم جارية: كل لمسة في نفس الجهة = 10 ثوانٍ إضافية
+        if let s = seekStreak, now < s.until, s.forward == forward {
+            seek(forward: forward, at: now)
+            return
+        }
+        if let t = lastTap, now.timeIntervalSince(t.time) < 0.3, t.forward == forward {
+            lastTap = nil
+            controls = false
+            seek(forward: forward, at: now)
+            return
+        }
+        lastTap = (now, forward)
+        toggleControls()
+    }
+
+    private func seek(forward: Bool, at now: Date) {
+        model.skip(forward ? 10 : -10)
+        seekStreak = (now.addingTimeInterval(0.7), forward)
+        seekFlash = (forward, (seekFlash?.id ?? 0) + 1)
+        let id = seekFlash?.id
+        Task { try? await Task.sleep(for: .milliseconds(650)); if seekFlash?.id == id { seekFlash = nil } }
+    }
+
     private func toggleControls() {
         controls.toggle()
         if controls { scheduleHide() }
@@ -371,7 +418,7 @@ struct ProPlayer: View {
     private func scheduleHide() {
         hideTask?.cancel()
         hideTask = Task {
-            try? await Task.sleep(for: .seconds(3.5))
+            try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled, model.isPlaying, !scrubbing else { return }
             controls = false
         }

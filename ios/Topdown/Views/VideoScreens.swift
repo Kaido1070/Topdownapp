@@ -12,28 +12,38 @@ struct VideoScreen: View {
     @State private var related: [MediaItem] = []
     @State private var request: DownloadRequest?
     @State private var fullscreen = false
+    @Environment(\.dismiss) private var dismiss
 
     private var playing: MediaItem { model?.item ?? item }
     private var episodes: [MediaItem] { model?.playlist ?? playlist }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Group {
-                    if let model {
-                        ProPlayer(model: model, onFullscreen: { fullscreen = true })
-                    } else {
-                        ZStack {
-                            RemoteImage(urls: Site.videoThumb(item.thumbnail), maxPixel: 900).opacity(0.35)
-                            ProgressView().controlSize(.large).tint(.white)
+        // صفحة واحدة: المشغّل مثبّت أعلى الشاشة من الحافة للحافة (بدون شريط تنقّل فوقه)، والتفاصيل تحته
+        VStack(spacing: 0) {
+            Group {
+                if let model {
+                    ProPlayer(model: model, onFullscreen: { fullscreen = true }, onClose: { dismiss() })
+                } else {
+                    ZStack(alignment: .topLeading) {
+                        RemoteImage(urls: Site.videoThumb(item.thumbnail), maxPixel: 900).opacity(0.35)
+                        ProgressView().controlSize(.large).tint(.white)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        Button { dismiss() } label: {
+                            Image(systemName: "chevron.down").font(.subheadline.bold()).frame(width: 34, height: 34)
                         }
+                        .buttonStyle(.glass).buttonBorderShape(.circle).tint(.white)
+                        .padding(10)
                     }
                 }
-                .aspectRatio(16/9, contentMode: .fit)
-                .background(.black)
-                .clipShape(.rect(cornerRadius: 22))
-                .padding(.horizontal)
+            }
+            .aspectRatio(16/9, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .background(.black)
+            .clipped()
+            .background(Color.black.ignoresSafeArea(edges: .top))
 
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(playing.title).font(.title3.bold())
                     HStack(spacing: 8) {
@@ -113,8 +123,9 @@ struct VideoScreen: View {
             }
             .padding(.vertical)
         }
-        .navigationTitle(playing.title)
-        .navigationBarTitleDisplayMode(.inline)
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
         .task {
             guard model == nil else { return }
             let m = PlayerModel(item: item, playlist: playlist)

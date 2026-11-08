@@ -175,6 +175,12 @@ final class PlayerModel: NSObject {
         play()
         updateNowPlaying()
         Task { await loadQualities(asset) }
+        // بعض الروابط لا تُبلغ عن المدة عبر المراقبة؛ نقرؤها من الملف مباشرة
+        Task { [weak self] in
+            if let d = try? await asset.load(.duration).seconds, d.isFinite, d > 0, self?.duration == 0 {
+                self?.duration = d
+            }
+        }
     }
 
     private func loadQualities(_ asset: AVURLAsset) async {
@@ -208,14 +214,13 @@ final class PlayerModel: NSObject {
             pi.preferredMaximumResolution = CGSize(width: CGFloat(q.height) * 16 / 9 + 2, height: CGFloat(q.height) + 2)
             pi.preferredPeakBitRate = q.bitrate > 0 ? q.bitrate * 1.05 : 0
         }
-        Haptics.tap()
     }
 
     // MARK: - التحكم
 
     func play() { player.playImmediately(atRate: holdBoost ? 2 : rate); isPlaying = true; ended = false }
     func pause() { player.pause(); isPlaying = false; savePosition(force: true) }
-    func toggle() { isPlaying ? pause() : play(); Haptics.tap() }
+    func toggle() { isPlaying ? pause() : play() }
 
     func seek(to seconds: Double, precise: Bool = false) {
         let t = max(0, min(seconds, duration > 0 ? duration - 0.5 : seconds))
@@ -225,7 +230,7 @@ final class PlayerModel: NSObject {
         if ended { ended = false; countdownTask?.cancel(); nextCountdown = nil }
     }
 
-    func skip(_ delta: Double) { seek(to: current + delta); Haptics.tap() }
+    func skip(_ delta: Double) { seek(to: current + delta) }
 
     func togglePiP() {
         guard let pip = pipController else { return }
