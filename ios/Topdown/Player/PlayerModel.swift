@@ -79,10 +79,11 @@ final class PlayerModel: NSObject {
     private(set) var quality: PlaybackQuality = .auto
     private(set) var resumedFrom: Double?
     private(set) var pipActive = false
-    private(set) var pipPossible = false
     private(set) var ended = false
-    var rate: Float = 1 { didSet { if isPlaying { player.rate = rate } } }
-    var holdBoost = false { didSet { player.rate = holdBoost ? 2 : (isPlaying ? rate : 0) } }
+    /// المشغّل الأصلي معروض بملء الشاشة (لا نوقف التشغيل عند اختفاء الصفحة خلفه)
+    var inFullScreen = false
+    /// السرعة المختارة من قائمة المشغّل (تبقى للحلقة التالية)
+    private var rate: Float { player.defaultRate > 0 ? player.defaultRate : 1 }
 
     /// العدّ التنازلي للحلقة التالية (ثوانٍ) — nil عند عدم الظهور
     private(set) var nextCountdown: Int?
@@ -96,7 +97,6 @@ final class PlayerModel: NSObject {
     @ObservationIgnored private var retried = false
     @ObservationIgnored private var lastSaved: Double = 0
     @ObservationIgnored private var prefetched: [String: Resolved] = [:]
-    @ObservationIgnored var pipController: AVPictureInPictureController?
     @ObservationIgnored var onRecord: ((MediaItem) -> Void)?
 
     init(item: MediaItem, playlist: [MediaItem] = []) {
@@ -218,7 +218,7 @@ final class PlayerModel: NSObject {
 
     // MARK: - التحكم
 
-    func play() { player.playImmediately(atRate: holdBoost ? 2 : rate); isPlaying = true; ended = false }
+    func play() { player.playImmediately(atRate: rate); isPlaying = true; ended = false }
     func pause() { player.pause(); isPlaying = false; savePosition(force: true) }
     func toggle() { isPlaying ? pause() : play() }
 
@@ -232,10 +232,7 @@ final class PlayerModel: NSObject {
 
     func skip(_ delta: Double) { seek(to: current + delta) }
 
-    func togglePiP() {
-        guard let pip = pipController else { return }
-        if pip.isPictureInPictureActive { pip.stopPictureInPicture() } else { pip.startPictureInPicture() }
-    }
+    func setPiP(_ active: Bool) { pipActive = active }
 
     func playNext() {
         guard let n = nextItem else { return }
@@ -271,7 +268,9 @@ final class PlayerModel: NSObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.isBuffering = status == .waitingToPlayAtSpecifiedRate
+                // أزرار المشغّل الأصلي تشغّل/توقف مباشرة؛ نتابع حالته
                 if status == .playing { self.isPlaying = true }
+                if status == .paused { self.isPlaying = false }
             }
         })
     }
@@ -401,29 +400,9 @@ final class PlayerModel: NSObject {
         return u
     }
 
-    // MARK: - صورة داخل صورة
-
-    func attachPiP(_ layer: AVPlayerLayer) {
-        guard AVPictureInPictureController.isPictureInPictureSupported(), pipController == nil else { return }
-        let pip = AVPictureInPictureController(playerLayer: layer)
-        pip?.canStartPictureInPictureAutomaticallyFromInline = true
-        pip?.delegate = self
-        pipController = pip
-        pipPossible = pip != nil
-    }
-
     deinit {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
-    }
-}
-
-extension PlayerModel: AVPictureInPictureControllerDelegate {
-    nonisolated func pictureInPictureControllerDidStartPictureInPicture(_ c: AVPictureInPictureController) {
-        Task { @MainActor in self.pipActive = true }
-    }
-    nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ c: AVPictureInPictureController) {
-        Task { @MainActor in self.pipActive = false }
     }
 }
 

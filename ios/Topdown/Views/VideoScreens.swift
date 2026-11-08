@@ -11,36 +11,27 @@ struct VideoScreen: View {
     @State private var model: PlayerModel?
     @State private var related: [MediaItem] = []
     @State private var request: DownloadRequest?
-    @State private var fullscreen = false
-    @Environment(\.dismiss) private var dismiss
+    @AppStorage("player.skipSeconds") private var skipSeconds = 85.0
 
     private var playing: MediaItem { model?.item ?? item }
     private var episodes: [MediaItem] { model?.playlist ?? playlist }
 
     var body: some View {
-        // صفحة واحدة: المشغّل مثبّت أعلى الشاشة من الحافة للحافة (بدون شريط تنقّل فوقه)، والتفاصيل تحته
+        // المشغّل الأصلي مثبّت أعلى الصفحة من الحافة للحافة، والتفاصيل تحته
         VStack(spacing: 0) {
-            Group {
+            ZStack {
+                Color.black
                 if let model {
-                    ProPlayer(model: model, onFullscreen: { fullscreen = true }, onClose: { dismiss() })
+                    NativePlayer(model: model, actions: model.contextualActions(skipSeconds: skipSeconds))
+                    if let e = model.error { PlayerErrorOverlay(model: model, message: e) }
                 } else {
-                    ZStack(alignment: .topLeading) {
-                        RemoteImage(urls: Site.videoThumb(item.thumbnail), maxPixel: 900).opacity(0.35)
-                        ProgressView().controlSize(.large).tint(.white)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        Button { dismiss() } label: {
-                            Image(systemName: "chevron.down").font(.subheadline.bold()).frame(width: 34, height: 34)
-                        }
-                        .buttonStyle(.glass).buttonBorderShape(.circle).tint(.white)
-                        .padding(10)
-                    }
+                    RemoteImage(urls: Site.videoThumb(item.thumbnail), maxPixel: 900).opacity(0.35)
+                    ProgressView().controlSize(.large).tint(.white)
                 }
             }
             .aspectRatio(16/9, contentMode: .fit)
             .frame(maxWidth: .infinity)
-            .background(.black)
             .clipped()
-            .background(Color.black.ignoresSafeArea(edges: .top))
 
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -124,8 +115,9 @@ struct VideoScreen: View {
             .padding(.vertical)
         }
         }
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .onAppear { app.watching = true }
         .task {
             guard model == nil else { return }
             let m = PlayerModel(item: item, playlist: playlist)
@@ -139,10 +131,10 @@ struct VideoScreen: View {
             }
         }
         .onDisappear {
-            if !fullscreen, model?.pipActive != true { model?.stop() }
-        }
-        .fullScreenCover(isPresented: $fullscreen) {
-            if let model { FullscreenPlayer(model: model) }
+            // عرض ملء الشاشة أو صورة داخل صورة يُخفيان الصفحة دون أن يُنهيا المشاهدة
+            guard model?.inFullScreen != true else { return }
+            app.watching = false
+            if model?.pipActive != true { model?.stop() }
         }
         .sheet(item: $request) { req in
             DownloadSheet(request: req)

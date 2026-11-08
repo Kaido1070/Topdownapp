@@ -81,7 +81,7 @@ struct MainTabs: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory {
+        .tabViewBottomAccessory(isEnabled: !app.watching) {
             BottomAccessory()
         }
         .fullScreenCover(item: $app.reader) { req in

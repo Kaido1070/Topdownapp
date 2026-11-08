@@ -32,6 +32,8 @@ final class AppModel {
     var revealedOnce = false
     /// القارئ يُعرض بملء الشاشة فوق كل شيء (بدون شريط التبويبات)
     var reader: ReaderRequest?
+    /// صفحة فيديو مفتوحة: نُخفي الشريط السفلي (حالة الاتصال/التحميل) لتبقى الشاشة للمشغّل
+    var watching = false
     /// اختبار المحاكي فقط: فتح فيديو مباشرة
     var debugVideo: MediaItem?
 
