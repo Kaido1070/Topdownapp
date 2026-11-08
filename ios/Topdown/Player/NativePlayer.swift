@@ -2,18 +2,15 @@ import SwiftUI
 import AVKit
 
 /// مشغّل iOS الأصلي (نفس مشغّل Safari والصور): السرعة، ±10 ث، صورة داخل صورة، AirPlay،
-/// وملء الشاشة مع التدوير — بدون أدوات مخصّصة. نضيف فقط زرّي «تخطّي المقدمة» و«الحلقة التالية».
+/// وملء الشاشة مع التدوير — بدون أدوات مخصّصة. «تخطّي المقدمة» و«الحلقة التالية» تحت المشغّل.
 struct NativePlayer: UIViewControllerRepresentable {
     let model: PlayerModel
-    /// أزرار تظهر داخل المشغّل نفسه (في الوضع العادي وملء الشاشة)
-    var actions: [Action] = []
 
-    struct Action: Equatable {
+    struct Action: Identifiable {
         let id: String
         let title: String
         let icon: String
         let run: () -> Void
-        static func == (a: Action, b: Action) -> Bool { a.id == b.id && a.title == b.title }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(model) }
@@ -30,27 +27,16 @@ struct NativePlayer: UIViewControllerRepresentable {
         vc.exitsFullScreenWhenPlaybackEnds = false
         vc.videoGravity = .resizeAspect
         vc.view.backgroundColor = .black
-        context.coordinator.apply(actions, to: vc)
         return vc
     }
 
     func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {
         if vc.player !== model.player { vc.player = model.player }
-        context.coordinator.apply(actions, to: vc)
     }
 
     final class Coordinator: NSObject, AVPlayerViewControllerDelegate {
         let model: PlayerModel
-        private var shown: [Action] = []
         init(_ model: PlayerModel) { self.model = model }
-
-        @MainActor func apply(_ actions: [Action], to vc: AVPlayerViewController) {
-            guard actions != shown else { return }
-            shown = actions
-            vc.contextualActions = actions.map { a in
-                UIAction(title: a.title, image: UIImage(systemName: a.icon)) { _ in a.run() }
-            }
-        }
 
         func playerViewController(_ vc: AVPlayerViewController,
                                   willBeginFullScreenPresentationWithAnimationCoordinator c: UIViewControllerTransitionCoordinator) {
@@ -96,6 +82,27 @@ extension PlayerModel {
             })
         }
         return list
+    }
+}
+
+/// أزرار سريعة تحت المشغّل (تظهر فقط عند الحاجة)
+struct PlayerActionsRow: View {
+    let actions: [NativePlayer.Action]
+
+    var body: some View {
+        if !actions.isEmpty {
+            HStack(spacing: 10) {
+                ForEach(actions) { a in
+                    Button(action: a.run) {
+                        Label(a.title, systemImage: a.icon).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glassProminent)
+                }
+            }
+            .controlSize(.large)
+            .padding(.horizontal)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
     }
 }
 

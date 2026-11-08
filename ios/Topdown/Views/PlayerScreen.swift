@@ -14,7 +14,7 @@ struct PlayerScreen: View {
                 ZStack {
                     Color.black
                     if let model {
-                        NativePlayer(model: model, actions: model.contextualActions(skipSeconds: skipSeconds))
+                        NativePlayer(model: model)
                         if let e = model.error { PlayerErrorOverlay(model: model, message: e) }
                     } else {
                         ProgressView().tint(.white)
@@ -22,6 +22,7 @@ struct PlayerScreen: View {
                 }
                 .aspectRatio(16/9, contentMode: .fit)
                 .frame(maxWidth: .infinity)
+                if let model { PlayerActionsRow(actions: model.contextualActions(skipSeconds: skipSeconds)) }
 
                 Text(model?.item.title ?? video.title).font(.title3.bold()).padding(.horizontal)
                 Label("من التحميلات — يعمل بدون إنترنت", systemImage: "arrow.down.circle.fill")

@@ -81,11 +81,21 @@ struct MainTabs: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory(isEnabled: !app.watching) {
-            BottomAccessory()
-        }
+        .modifier(BottomAccessoryHost(hidden: app.watching))
         .fullScreenCover(item: $app.reader) { req in
             ReaderScreen(request: req)
+        }
+    }
+}
+
+/// الشريط السفلي يختفي أثناء المشاهدة (iOS 26.1 فأحدث)
+private struct BottomAccessoryHost: ViewModifier {
+    let hidden: Bool
+    func body(content: Content) -> some View {
+        if #available(iOS 26.1, *) {
+            content.tabViewBottomAccessory(isEnabled: !hidden) { BottomAccessory() }
+        } else {
+            content.tabViewBottomAccessory { BottomAccessory() }
         }
     }
 }

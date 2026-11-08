@@ -22,7 +22,7 @@ struct VideoScreen: View {
             ZStack {
                 Color.black
                 if let model {
-                    NativePlayer(model: model, actions: model.contextualActions(skipSeconds: skipSeconds))
+                    NativePlayer(model: model)
                     if let e = model.error { PlayerErrorOverlay(model: model, message: e) }
                 } else {
                     RemoteImage(urls: Site.videoThumb(item.thumbnail), maxPixel: 900).opacity(0.35)
@@ -32,6 +32,12 @@ struct VideoScreen: View {
             .aspectRatio(16/9, contentMode: .fit)
             .frame(maxWidth: .infinity)
             .clipped()
+
+            if let model {
+                PlayerActionsRow(actions: model.contextualActions(skipSeconds: skipSeconds))
+                    .padding(.top, 12)
+                    .animation(.smooth, value: model.contextualActions(skipSeconds: skipSeconds).map(\.title))
+            }
 
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
