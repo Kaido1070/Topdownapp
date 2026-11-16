@@ -41,6 +41,7 @@ final class DownloadCenter {
     private init() {
         load()
         makeSessions()
+        refreshStorage()
     }
 
     // MARK: - ملخصات للواجهة
@@ -60,8 +61,26 @@ final class DownloadCenter {
         return nil
     }
 
-    var totalBytes: Int64 {
-        videos.reduce(0) { $0 + $1.bytes } + Storage.size(of: Storage.storiesDir)
+    /// حجم مجلد القصص محسوب في الخلفية (حسابه مع كل رسم للواجهة كان يثقّل التطبيق أثناء التحميل)
+    private(set) var storiesBytes: Int64 = 0
+    @ObservationIgnored private var sizeTask: Task<Void, Never>?
+
+    var totalBytes: Int64 { videos.reduce(0) { $0 + $1.bytes } + storiesBytes }
+
+    func refreshStorage() {
+        sizeTask?.cancel()
+        sizeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            let size = await Task.detached(priority: .utility) { Storage.size(of: Storage.storiesDir) }.value
+            self?.storiesBytes = size
+        }
+    }
+
+    /// عند الرجوع للتطبيق: نكمل طابور الفصول الذي أوقفه النظام في الخلفية.
+    func appBecameActive() {
+        guard restored else { return }
+        pumpChapters()
     }
 
     var storageSummary: String { Storage.format(totalBytes) }
@@ -371,6 +390,8 @@ final class DownloadCenter {
 
     /// يشغّل الفصول التالية في الطابور حسب الأولوية وعدد التحميلات المتزامنة.
     func pumpChapters() {
+        // في الخلفية يعلّق النظام الطلبات فتفشل الصفحات: ننتظر الرجوع للتطبيق
+        guard UIApplication.shared.applicationState != .background else { return }
         let limit = min(3, max(1, storyParallel))
         let free = limit - chapterJobs.count
         guard free > 0 else { return }
@@ -450,7 +471,7 @@ final class DownloadCenter {
             // الصفحات المحمّلة سابقًا (عند الاستئناف) لا نعيد تحميلها
             var pages = [String?](repeating: nil, count: images.count)
             var bytes: Int64 = 0
-            if let files = try? FileManager.default.contentsOfDirectory(atPath: folder.path()) {
+            if let files = try? FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)) {
                 for f in files {
                     guard let i = Int(f.prefix(4)), images.indices.contains(i) else { continue }
                     pages[i] = f
@@ -516,14 +537,28 @@ final class DownloadCenter {
                 $0.pages = saved; $0.state = .completed; $0.progress = 1; $0.errorMessage = nil
                 $0.bytes = Storage.size(of: folder)
             }
+            chapterRetries[chapterURL] = nil
+            refreshStorage()
             if let s = story(storyURL), !s.chapters.contains(where: { $0.state.isActive }) {
                 notify("اكتمل التحميل", "الملف جاهز في التحميلات")
             }
         } catch {
             if Task.isCancelled { return }
+            // انقطاع مؤقت (خروج من التطبيق، نت ضعيف): نعيد المحاولة تلقائيًا مرتين ونكمل الناقص فقط
+            let tries = chapterRetries[chapterURL] ?? 0
+            let inBackground = UIApplication.shared.applicationState == .background
+            if inBackground || tries < 2 {
+                if !inBackground { chapterRetries[chapterURL] = tries + 1 }
+                updateChapter(storyURL, chapterURL) { $0.state = .queued }
+                if !inBackground { try? await Task.sleep(for: .seconds(2)) }
+                return
+            }
+            chapterRetries[chapterURL] = nil
             updateChapter(storyURL, chapterURL) { $0.state = .failed; $0.errorMessage = error.localizedDescription }
         }
     }
+
+    @ObservationIgnored private var chapterRetries: [String: Int] = [:]
 
     /// يجلب الصفحة (نسخة مضغوطة أولًا عند توفير البيانات، ثم الأصلية ثم بروكسي الموقع)،
     /// ويعيد ضغطها على الجهاز حسب الجودة المختارة.
@@ -535,10 +570,9 @@ final class DownloadCenter {
         for (url, compressed) in candidates {
             if Task.isCancelled { return nil }
             let req = Self.request(url)
-            guard let got = await Self.get(req), case let (data, resp) = got,
-                  let http = resp as? HTTPURLResponse, http.statusCode == 200,
-                  data.count > 200, ImageCompressor.isImage(data) else {
-                if compressed { WsrvPolicy.failed(url) }
+            guard let got = await Self.get(req), case let (data, resp) = got, let http = resp as? HTTPURLResponse else { continue }
+            guard http.statusCode == 200, data.count > 200, ImageCompressor.isImage(data) else {
+                if compressed { WsrvPolicy.failed(url, status: http.statusCode) }
                 continue
             }
             var out = data
@@ -580,6 +614,7 @@ final class DownloadCenter {
     }
 
     func retry(chapter: ChapterDownload, in story: StoryDownload) {
+        chapterRetries[chapter.url] = nil
         updateChapter(story.url, chapter.url) { $0.state = .queued; $0.errorMessage = nil }
         pumpChapters()
     }
@@ -617,6 +652,7 @@ final class DownloadCenter {
                 updateChapter(s.url, c.url) { $0.pages = names; $0.bytes = Storage.size(of: folder); $0.quality = quality.rawValue }
             }
         }
+        refreshStorage()
         return saved
     }
 
@@ -626,6 +662,7 @@ final class DownloadCenter {
         guard let s = stories.firstIndex(where: { $0.url == story.url }) else { return }
         stories[s].chapters.removeAll { $0.url == chapter.url }
         if stories[s].chapters.isEmpty { remove(story: stories[s]) } else { scheduleSave() }
+        refreshStorage()
     }
 
     func remove(story: StoryDownload) {
@@ -635,6 +672,7 @@ final class DownloadCenter {
         if let cover = story.coverFile { try? FileManager.default.removeItem(at: Storage.absolute(cover)) }
         stories.removeAll { $0.url == story.url }
         scheduleSave()
+        refreshStorage()
     }
 
     func saveReadingPosition(story: String, chapter: String, page: Int) {

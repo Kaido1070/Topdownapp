@@ -284,7 +284,8 @@ struct SourcesScreen: View {
         }
         .navigationTitle("المصادر")
         .task {
-            do { sources = try await API.shared.sourceDirectory() } catch { self.error = error.localizedDescription }
+            do { sources = try await API.shared.sourceDirectory() }
+            catch { if !error.isCancellation { self.error = error.localizedDescription } }
         }
     }
 

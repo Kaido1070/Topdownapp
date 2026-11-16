@@ -20,7 +20,8 @@ struct NativePlayer: UIViewControllerRepresentable {
         vc.player = model.player
         vc.delegate = context.coordinator
         vc.allowsPictureInPicturePlayback = true
-        vc.canStartPictureInPictureAutomaticallyFromInline = true
+        // لا يبدأ «صورة داخل صورة» تلقائيًا عند الخروج من التطبيق (يكشف المحتوى فوق الشاشة الرئيسية)؛ الزر اليدوي موجود
+        vc.canStartPictureInPictureAutomaticallyFromInline = false
         // معلومات «يُعرض الآن» يديرها PlayerModel
         vc.updatesNowPlayingInfoCenter = false
         vc.entersFullScreenWhenPlaybackBegins = false
@@ -40,13 +41,23 @@ struct NativePlayer: UIViewControllerRepresentable {
 
         func playerViewController(_ vc: AVPlayerViewController,
                                   willBeginFullScreenPresentationWithAnimationCoordinator c: UIViewControllerTransitionCoordinator) {
-            MainActor.assumeIsolated { model.inFullScreen = true }
+            MainActor.assumeIsolated {
+                model.inFullScreen = true
+                Orientation.set(.landscape)
+            }
         }
 
         func playerViewController(_ vc: AVPlayerViewController,
                                   willEndFullScreenPresentationWithAnimationCoordinator c: UIViewControllerTransitionCoordinator) {
-            c.animate(alongsideTransition: nil) { _ in
-                MainActor.assumeIsolated { self.model.inFullScreen = false }
+            // النظام يوقف التشغيل عند الخروج من ملء الشاشة: نكمل إن كان يعمل
+            let wasPlaying = MainActor.assumeIsolated { model.isPlaying }
+            c.animate(alongsideTransition: nil) { ctx in
+                MainActor.assumeIsolated {
+                    guard !ctx.isCancelled else { return }
+                    self.model.inFullScreen = false
+                    Orientation.set(.portrait)
+                    if wasPlaying { self.model.play() }
+                }
             }
         }
 
@@ -62,6 +73,15 @@ struct NativePlayer: UIViewControllerRepresentable {
                                   restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completion: @escaping (Bool) -> Void) {
             completion(true)
         }
+    }
+}
+
+enum Orientation {
+    /// يطلب تدوير الواجهة (أفقي عند ملء الشاشة، عمودي عند الرجوع). على الآيباد لا نغيّر شيئًا.
+    @MainActor static func set(_ mask: UIInterfaceOrientationMask) {
+        guard UIDevice.current.userInterfaceIdiom == .phone,
+              let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
     }
 }
 

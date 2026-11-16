@@ -29,41 +29,87 @@ final class AnimeFeed {
 
     private var selected: [AnimeSource] { source == .all ? AnimeSource.concrete : [source] }
 
-    func reload() async {
+    /// التحميل يملكه الكتالوج نفسه وليس الشاشة، فلا تلغيه SwiftUI عند تبديل التبويب أو إعادة بناء الواجهة
+    /// (الإلغاء كان يُظهر «تعذّر التحميل» بلا سبب).
+    @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var pendingMore = false
+
+    /// يبدأ التحميل إن لم يكن هناك محتوى ولا تحميل جارٍ.
+    func start() {
+        guard items.isEmpty, !loading else { return }
+        refresh()
+    }
+
+    /// تحميل جديد من الصفحة الأولى. keepVisible: يُبقي النتائج الحالية ظاهرة حتى تصل الجديدة (السحب للتحديث).
+    func refresh(keepVisible: Bool = false) {
+        task = Task { [weak self] in await self?.reload(keepVisible: keepVisible) }
+    }
+
+    func refreshAndWait() async {
+        refresh(keepVisible: true)
+        await task?.value
+    }
+
+    private func reload(keepVisible: Bool) async {
         generation += 1
         let gen = generation
+        pendingMore = false
         loading = true
         errors = []
         staleNote = nil
-        pages = [:]
-        rebuild()
+        let replaceAtEnd = keepVisible && !items.isEmpty
+        if !replaceAtEnd {
+            pages = [:]
+            related = []
+            rebuild()
+        }
         let q = queryValue, so = sortValue
-        await withTaskGroup(of: (AnimeSource, Result<VideoPage, Error>).self) { group in
-            for s in selected {
-                group.addTask { (s, await Self.read(s, page: 1, query: q, sort: so)) }
-            }
-            for await (s, result) in group where gen == generation {
-                apply(s, result)
+        var results: [(AnimeSource, Result<VideoPage, Error>)] = []
+        // مهام مستقلة: لا ترث الإلغاء من الواجهة
+        let jobs = selected.map { s in (s, Task.detached { await Self.read(s, page: 1, query: q, sort: so) }) }
+        for (s, job) in jobs {
+            let result = await job.value
+            guard gen == generation else { return }
+            if replaceAtEnd { results.append((s, result)) } else { apply(s, result) }
+        }
+        if replaceAtEnd {
+            // لا نمسح الموجود إذا فشل التحديث كله (مثل انقطاع النت)
+            let anySuccess = results.contains { if case .success = $0.1 { true } else { false } }
+            if anySuccess {
+                pages = [:]
+                related = []
+                for (s, r) in results { apply(s, r) }
+            } else {
+                AppModel.shared.show("تعذّر التحديث — تحقق من الاتصال")
             }
         }
-        if gen == generation { loading = false }
+        loading = false
     }
 
-    func loadMore() async {
-        guard !loading, !loadingMore, hasNext else { return }
+    /// يطلب الصفحة التالية (لا يضيع الطلب إذا كان هناك تحميل جارٍ).
+    func requestMore() {
+        Task { [weak self] in await self?.loadMore() }
+    }
+
+    private func loadMore(skips: Int = 0) async {
+        guard hasNext else { return }
+        guard !loading, !loadingMore else { pendingMore = true; return }
         let gen = generation
+        let before = items.count
         loadingMore = true
         let targets = selected.compactMap { s in pages[s]?.next.map { (s, $0) } }
         let q = queryValue, so = sortValue
-        await withTaskGroup(of: (AnimeSource, Result<VideoPage, Error>).self) { group in
-            for (s, page) in targets {
-                group.addTask { (s, await Self.read(s, page: page, query: q, sort: so)) }
-            }
-            for await (s, result) in group where gen == generation {
-                apply(s, result, append: true)
-            }
+        let jobs = targets.map { (s, page) in (s, Task.detached { await Self.read(s, page: page, query: q, sort: so) }) }
+        for (s, job) in jobs {
+            let result = await job.value
+            guard gen == generation else { return }
+            apply(s, result, append: true)
         }
         loadingMore = false
+        // صفحة لم تُظهر جديدًا (فلتر المدة/التصنيف أو تكرار) أو طلب انتظر: نكمل للتالية
+        let again = pendingMore || items.count == before
+        pendingMore = false
+        if again, hasNext, skips < 4 { await loadMore(skips: items.count == before ? skips + 1 : 0) }
     }
 
     private var queryValue: String { query.trimmingCharacters(in: .whitespaces) }
@@ -87,12 +133,20 @@ final class AnimeFeed {
             let duplicate = append && !fresh.isEmpty && fresh.allSatisfy { f in prior.contains { $0.key == f.key } }
             let requested = append ? (pages[s]?.next ?? 1) : 1
             let next = !duplicate && (page.nextPage ?? 0) > requested ? page.nextPage : nil
+            // مصدر محجوب يُرجع عناوين محفوظة لا تفتح: لا نخلطها مع «كل المصادر»
+            if page.stale == true && source == .all && !append {
+                pages[s] = ([], nil)
+                rebuild()
+                return
+            }
             pages[s] = (unique(prior + fresh), next)
             if s == .legacy, !queryValue.isEmpty { related = unique(related + (page.related?.values ?? [])) }
             if page.stale == true { staleNote = page.cachedAt ?? "محفوظ سابقًا" }
         case .failure(let e):
             if !append || source != .all { errors.append("\(s.name): \(e.localizedDescription)") }
             if !append { pages[s] = ([], nil) }
+            // فشل صفحة تالية: نوقف هذا المصدر حتى لا نعيد طلبها مع كل تمرير
+            else if let cur = pages[s] { pages[s] = (cur.items, nil) }
         }
         rebuild()
     }

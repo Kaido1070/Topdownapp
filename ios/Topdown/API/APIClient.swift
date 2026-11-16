@@ -65,6 +65,14 @@ enum APIError: LocalizedError {
     }
 }
 
+extension Error {
+    /// الطلب أُلغي لأن الشاشة أُغلقت أو تغيّرت: ليس خطأ يُعرض للمستخدم
+    var isCancellation: Bool {
+        self is CancellationError || (self as? URLError)?.code == .cancelled
+            || ((self as NSError).domain == NSURLErrorDomain && (self as NSError).code == NSURLErrorCancelled)
+    }
+}
+
 /// عميل واجهة الموقع.
 /// كوكي الجلسة td_session من نوع SameSite=Strict، وiOS لا يرسل هذا النوع تلقائيًا
 /// مع طلبات URLSession العادية، فكانت كل الطلبات بعد الدخول ترجع 401.
@@ -137,7 +145,9 @@ final class API: @unchecked Sendable {
         } catch {
             return .unreachable
         }
-        return await silentRelogin() ? .valid : .invalid
+        if await silentRelogin() { return .valid }
+        // كلمة المرور ما زالت محفوظة = الفشل مؤقت (الخادم أو الشبكة)، فلا نطرد المستخدم لشاشة الدخول
+        return Keychain.password == nil ? .invalid : .unreachable
     }
 
     func login(password: String) async throws {
@@ -152,7 +162,7 @@ final class API: @unchecked Sendable {
         let http = resp as? HTTPURLResponse
         let code = http?.statusCode ?? 0
         guard code == 200 else {
-            throw code == 401 ? APIError.server("كلمة المرور غير صحيحة") : APIError.server(message(data) ?? "تعذّر تسجيل الدخول (\(code))")
+            throw code == 401 ? APIError.server(Self.wrongPassword) : APIError.server(message(data) ?? "تعذّر تسجيل الدخول (\(code))")
         }
         guard let token = Self.sessionToken(from: http) else {
             throw APIError.server("الخادم لم يُرجع جلسة دخول")
@@ -160,6 +170,8 @@ final class API: @unchecked Sendable {
         Keychain.sessionToken = token
         Keychain.password = password
     }
+
+    static let wrongPassword = "كلمة المرور غير صحيحة"
 
     func logout() async {
         _ = try? await send("POST", "/api/logout", retry: false)
@@ -194,7 +206,14 @@ final class API: @unchecked Sendable {
         guard let password = Keychain.password else { return false }
         let task: Task<Bool, Never> = reloginLock.withLock {
             if let existing = reloginTask { return existing }
-            let t = Task { (try? await self.login(password: password)) != nil }
+            let t = Task {
+                do { try await self.login(password: password); return true }
+                catch APIError.server(let m) where m == Self.wrongPassword {
+                    // كلمة المرور تغيّرت في الموقع: نطلبها من جديد بدل المحاولة للأبد
+                    Keychain.password = nil
+                    return false
+                } catch { return false }
+            }
             reloginTask = t
             return t
         }
@@ -275,6 +294,13 @@ final class API: @unchecked Sendable {
 
     func resolve(_ item: MediaItem) async throws -> Resolved {
         try await post("/api/resolve", body: item.payload)
+    }
+
+    /// أغلفة بديلة لبطاقة فيديو بلا صورة (من صفحة العمل نفسها).
+    func videoCovers(_ item: MediaItem) async -> [String] {
+        struct R: Decodable { let covers: [String]? }
+        let r: R? = try? await get("/api/video/cover", ["provider": item.providerId, "id": item.id])
+        return r?.covers ?? []
     }
 
     func related(_ item: MediaItem) async throws -> [MediaItem] {

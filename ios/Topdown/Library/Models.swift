@@ -92,15 +92,36 @@ enum Storage {
 
     /// المسارات تُحفظ نسبيًا لأن مسار حاوية التطبيق يتغيّر بين التحديثات.
     static func relative(_ url: URL) -> String {
-        let h = home.standardizedFileURL.path()
-        let p = url.standardizedFileURL.path()
-        return p.hasPrefix(h) ? String(p.dropFirst(h.count)) : p
+        // /private/var و /var نفس المكان: نوحّدهما قبل المقارنة
+        let h = home.resolvingSymlinksInPath().path(percentEncoded: false)
+        let p = url.resolvingSymlinksInPath().path(percentEncoded: false)
+        if p.hasPrefix(h) { return String(p.dropFirst(h.count)) }
+        return insideContainer(p) ?? p
+    }
+
+    /// الجزء الذي بعد مجلد حاوية التطبيق (…/Data/Application/<UUID>/) إن وُجد في المسار.
+    private static func insideContainer(_ path: String) -> String? {
+        guard let r = path.range(of: "/Data/Application/") else { return nil }
+        let rest = path[r.upperBound...]
+        guard let slash = rest.firstIndex(of: "/") else { return nil }
+        return String(rest[slash...])
     }
 
     static func absolute(_ path: String) -> URL {
-        path.hasPrefix("/") && !path.hasPrefix(home.path()) && FileManager.default.fileExists(atPath: path)
-            ? URL(filePath: path)
-            : home.appending(path: path)
+        let fm = FileManager.default
+        if path.hasPrefix("/") && !path.hasPrefix(home.path(percentEncoded: false)) && fm.fileExists(atPath: path) {
+            return URL(filePath: path)
+        }
+        // مسار كامل من حاوية قديمة (تتغيّر مع كل تحديث للتطبيق): نأخذ الجزء الداخلي فقط
+        let path = insideContainer(path) ?? path
+        let direct = URL(filePath: home.path(percentEncoded: false)).appending(path: path)
+        if fm.fileExists(atPath: direct.path(percentEncoded: false)) { return direct }
+        // سجلات قديمة حُفظت مساراتها مُرمّزة (%20…): نجرّب النسخة المفكوكة
+        if path.contains("%"), let decoded = path.removingPercentEncoding {
+            let alt = URL(filePath: home.path(percentEncoded: false)).appending(path: decoded)
+            if fm.fileExists(atPath: alt.path(percentEncoded: false)) { return alt }
+        }
+        return direct
     }
 
     static func safeName(_ s: String) -> String {
@@ -118,9 +139,9 @@ enum Storage {
     static func size(of url: URL) -> Int64 {
         let fm = FileManager.default
         var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: url.path(), isDirectory: &isDir) else { return 0 }
+        guard fm.fileExists(atPath: url.path(percentEncoded: false), isDirectory: &isDir) else { return 0 }
         if !isDir.boolValue {
-            let attrs = try? fm.attributesOfItem(atPath: url.path())
+            let attrs = try? fm.attributesOfItem(atPath: url.path(percentEncoded: false))
             return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
         }
         var total: Int64 = 0

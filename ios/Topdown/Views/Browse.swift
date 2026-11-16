@@ -93,11 +93,11 @@ struct ExploreView: View {
             }
             .navigationTitle("استكشف")
             .refreshable {
-                if app.mode == .anime { await anime.reload() } else { await stories.refreshAndWait() }
+                if app.mode == .anime { await anime.refreshAndWait() } else { await stories.refreshAndWait() }
             }
             .topdownDestinations()
             .onChange(of: app.debugVideo) { _, v in if let v { path.append(Route.video(v)); app.debugVideo = nil } }
-            .task { if anime.items.isEmpty && !anime.loading { await anime.reload() } }
+            .onAppear { anime.start() }
             .onAppear { if app.mode == .stories { stories.start() } }
             .onChange(of: app.mode, initial: true) { _, mode in
                 if mode == .stories {
@@ -192,9 +192,9 @@ struct AnimeFilters: View {
         .onChange(of: feed.source) { _, s in
             if s != .legacy { feed.sort = "latest" }
             feed.tag = ""
-            if explore || !feed.query.isEmpty { Task { await feed.reload() } }
+            if explore || !feed.query.isEmpty { feed.refresh() }
         }
-        .onChange(of: feed.sort) { _, _ in if explore { Task { await feed.reload() } } }
+        .onChange(of: feed.sort) { _, _ in if explore { feed.refresh() } }
         .onChange(of: feed.duration) { _, _ in feed.rebuild() }
         .onChange(of: feed.tag) { _, _ in feed.rebuild() }
     }
@@ -291,19 +291,35 @@ struct VideoGrid: View {
     var feed: AnimeFeed
 
     var body: some View {
-        FeedStatus(loading: feed.loading, errors: feed.errors, empty: feed.items.isEmpty) { await feed.reload() }
+        FeedStatus(loading: feed.loading, errors: feed.errors, empty: feed.items.isEmpty) { feed.refresh() }
+        if let note = feed.staleNote, !feed.items.isEmpty {
+            Label("المصدر لا يستجيب حاليًا — هذه عناوين محفوظة وقد لا تفتح", systemImage: "exclamationmark.triangle")
+                .font(.footnote).foregroundStyle(.orange)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+                .accessibilityHint(note)
+        }
         if !feed.items.isEmpty {
             Text("\(feed.items.count) نتيجة").font(.footnote).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
         }
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 165), spacing: 14)], spacing: 18) {
-            ForEach(feed.items, id: \.key) { item in
+            let list = feed.items
+            ForEach(Array(list.enumerated()), id: \.element.key) { i, item in
                 VideoCard(item: item)
-                    .onAppear { if item.key == feed.items.last?.key { Task { await feed.loadMore() } } }
+                    // نطلب الصفحة التالية قبل الوصول للنهاية بقليل
+                    .onAppear { if i >= list.count - 6 { feed.requestMore() } }
             }
         }
         .padding(.horizontal)
-        if feed.loadingMore { ProgressView().padding() }
+        if feed.hasNext && !feed.items.isEmpty {
+            if feed.loadingMore {
+                ProgressView().padding()
+            } else {
+                Button("تحميل المزيد", systemImage: "arrow.down.circle") { feed.requestMore() }
+                    .buttonStyle(.glass)
+                    .padding()
+            }
+        }
         if !feed.related.isEmpty {
             SectionHeader(title: "نتائج مرتبطة")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 165), spacing: 14)], spacing: 18) {
@@ -469,12 +485,18 @@ struct VideoCard: View {
     var width: CGFloat? = nil
     @Environment(Library.self) private var library
     @Environment(DownloadCenter.self) private var center
+    @State private var fallback: [URL] = []
 
     var body: some View {
         NavigationLink(value: item.opensDetails ? Route.work(item) : Route.video(item)) {
             VStack(alignment: .leading, spacing: 7) {
-                RemoteImage(urls: Site.videoThumb(item.thumbnail), maxPixel: 520)
+                RemoteImage(urls: Site.videoThumb(item.thumbnail) + fallback, maxPixel: 520)
                     .aspectRatio(16/10, contentMode: .fit)
+                    .task(id: item.key) {
+                        // بطاقة بلا صورة: نأخذ غلاف صفحة العمل نفسها
+                        guard item.thumbnail == nil || item.thumbnail?.isEmpty == true, fallback.isEmpty else { return }
+                        fallback = await VideoCovers.shared.covers(for: item).flatMap { Site.videoThumb($0) }
+                    }
                     .overlay(alignment: .bottomLeading) {
                         HStack(spacing: 4) {
                             if let d = item.durationText { Badge(text: d) }
@@ -510,6 +532,19 @@ struct VideoCard: View {
         } preview: {
             VideoPreview(item: item)
         }
+    }
+}
+
+/// أغلفة بديلة للبطاقات التي لم يرسل مصدرها صورة (تُطلب مرة واحدة لكل عمل).
+actor VideoCovers {
+    static let shared = VideoCovers()
+    private var cache: [String: [String]] = [:]
+
+    func covers(for item: MediaItem) async -> [String] {
+        if let hit = cache[item.key] { return hit }
+        let found = await API.shared.videoCovers(item)
+        if !Task.isCancelled { cache[item.key] = found }
+        return found
     }
 }
 
@@ -609,7 +644,7 @@ struct SearchView: View {
         guard !q.isEmpty else { return }
         submitted = true
         Task {
-            if app.mode == .anime { anime.query = q; await anime.reload() }
+            if app.mode == .anime { anime.query = q; anime.refresh() }
             else { stories.query = q; stories.refresh() }
         }
     }

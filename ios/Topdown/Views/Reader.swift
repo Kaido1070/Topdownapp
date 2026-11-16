@@ -71,7 +71,8 @@ struct ReaderScreen: View {
                     ChapterScroll(
                         id: url + "#" + readQuality,
                         pages: pages,
-                        initialPage: initialPage,
+                        // الصفحة الحالية دائمًا: أي إعادة بناء (تغيير الجودة، اكتمال تحميل الفصل) تبقى في مكانك
+                        initialPage: page,
                         endTitle: "نهاية " + current.displayTitle,
                         nextTitle: next.map { n in n.number.map { "الفصل التالي " + ChapterDownload.format($0) } ?? "الفصل التالي" },
                         onNext: { if let n = next { open(n) } },
@@ -179,7 +180,7 @@ struct ReaderScreen: View {
                         }
                         .disabled(following.isEmpty || !app.isOnline)
                     }
-                    Button("إعادة تحميل الفصل", systemImage: "arrow.clockwise") { Task { await load() } }
+                    Button("إعادة تحميل الفصل", systemImage: "arrow.clockwise") { Task { await load(keepPage: true) } }
                         .disabled(!app.isOnline)
                     Divider()
                     if local == nil {
@@ -305,14 +306,17 @@ struct ReaderScreen: View {
                         current: CapturedChapter(url: url, title: current.title, images: images))
     }
 
-    private func load() async {
+    private func load(keepPage: Bool = false) async {
+        let stay = keepPage ? page : nil
+        let top = startAtTop
+        startAtTop = false
         error = nil
         ready = false
         images = []
         page = 0
         if request.recordHistory { library.recordRead(request.story, chapter: current) }
         if let local {
-            initialPage = startAtTop ? 0 : min(max(0, local.lastReadPage), max(0, local.pages.count - 1))
+            initialPage = top ? 0 : min(max(0, stay ?? local.lastReadPage), max(0, local.pages.count - 1))
             page = initialPage
             ready = true
             return
@@ -322,7 +326,7 @@ struct ReaderScreen: View {
             if let cached = ChapterPrefetch.take(url) { loaded = cached } else { loaded = try await API.shared.chapter(url).images }
             guard !Task.isCancelled else { return }
             images = loaded
-            initialPage = startAtTop ? 0 : min(ReaderPositions.page(for: url), max(0, loaded.count - 1))
+            initialPage = top ? 0 : min(stay ?? ReaderPositions.page(for: url), max(0, loaded.count - 1))
             page = initialPage
             ready = true
         } catch {

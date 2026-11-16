@@ -12,6 +12,7 @@ struct VideoScreen: View {
     @State private var related: [MediaItem] = []
     @State private var request: DownloadRequest?
     @AppStorage("player.skipSeconds") private var skipSeconds = 85.0
+    @State private var counted = false
 
     private var playing: MediaItem { model?.item ?? item }
     private var episodes: [MediaItem] { model?.playlist ?? playlist }
@@ -123,7 +124,7 @@ struct VideoScreen: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
-        .onAppear { app.watching = true }
+        .onAppear { if !counted { counted = true; app.watchers += 1 } }
         .task {
             guard model == nil else { return }
             let m = PlayerModel(item: item, playlist: playlist)
@@ -139,7 +140,7 @@ struct VideoScreen: View {
         .onDisappear {
             // عرض ملء الشاشة أو صورة داخل صورة يُخفيان الصفحة دون أن يُنهيا المشاهدة
             guard model?.inFullScreen != true else { return }
-            app.watching = false
+            if counted { counted = false; app.watchers = max(0, app.watchers - 1) }
             if model?.pipActive != true { model?.stop() }
         }
         .sheet(item: $request) { req in
@@ -317,6 +318,7 @@ struct WorkScreen: View {
 
     private func load() async {
         error = nil
-        do { details = try await API.shared.details(item) } catch { self.error = error.localizedDescription }
+        do { details = try await API.shared.details(item) }
+        catch { if !error.isCancellation { self.error = error.localizedDescription } }
     }
 }

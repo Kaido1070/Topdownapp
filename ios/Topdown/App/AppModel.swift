@@ -27,13 +27,21 @@ final class AppModel {
     var isObscured = false
     var toast: String?
     /// الواجهة الظاهرة (محمّل فيديو عادي) تغطي التطبيق الحقيقي حتى يُدخَل الرمز
-    var concealed = true
+    var concealed = true {
+        didSet {
+            // عند الإخفاء: نوقف أي تشغيل ونمسح بيانات «يُعرض الآن» حتى لا يظهر شيء على شاشة القفل
+            if concealed && !oldValue { NotificationCenter.default.post(name: .stealthConcealed, object: nil) }
+        }
+    }
     /// لا نبني التطبيق الحقيقي إطلاقًا قبل أول فتح بالرمز
     var revealedOnce = false
     /// القارئ يُعرض بملء الشاشة فوق كل شيء (بدون شريط التبويبات)
     var reader: ReaderRequest?
-    /// صفحة فيديو مفتوحة: نُخفي الشريط السفلي (حالة الاتصال/التحميل) لتبقى الشاشة للمشغّل
-    var watching = false
+    /// عدد صفحات الفيديو المفتوحة: نُخفي الشريط السفلي (حالة الاتصال/التحميل) لتبقى الشاشة للمشغّل
+    var watchers = 0
+    var watching: Bool { watchers > 0 }
+    /// رسالة مؤجّلة تُعرض عند أول دخول للتطبيق الحقيقي (الواجهة الظاهرة تغطي ما قبله)
+    @ObservationIgnored var pendingToast: String?
     /// اختبار المحاكي فقط: فتح فيديو مباشرة
     var debugVideo: MediaItem?
 
@@ -83,6 +91,7 @@ final class AppModel {
             }
             backgroundedAt = nil
             if isLocked && !concealed { unlock() }
+            DownloadCenter.shared.appBecameActive()
         case .inactive:
             if privacyBlur && !concealed { isObscured = true }
         case .background:
@@ -99,6 +108,10 @@ final class AppModel {
         isLocked = false
         revealedOnce = true
         concealed = false
+        if let t = pendingToast {
+            pendingToast = nil
+            Task { try? await Task.sleep(for: .milliseconds(600)); show(t) }
+        }
     }
 
     func conceal() {
@@ -122,6 +135,10 @@ final class AppModel {
             if toast == message { withAnimation(.spring) { toast = nil } }
         }
     }
+}
+
+extension Notification.Name {
+    static let stealthConcealed = Notification.Name("stealth.concealed")
 }
 
 struct ReaderRequest: Identifiable {

@@ -50,7 +50,10 @@ struct RootView: View {
             let previous = UserDefaults.standard.string(forKey: key)
             if previous != AppVersion.full {
                 UserDefaults.standard.set(AppVersion.full, forKey: key)
-                if previous != nil { app.show("تم التحديث إلى الإصدار " + AppVersion.full) }
+                if previous != nil {
+                    let note = "تم التحديث إلى الإصدار " + AppVersion.full
+                    if app.concealed { app.pendingToast = note } else { app.show(note) }
+                }
             }
         }
     }

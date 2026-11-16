@@ -5,18 +5,27 @@ import ImageIO
 actor ImagePipeline {
     static let shared = ImagePipeline()
     private let cache = NSCache<NSString, UIImage>()
-    private var failed = Set<URL>()
+    /// روابط رفضها الخادم (404/403…) مع وقت الرفض؛ الأخطاء المؤقتة والإلغاء لا تُسجَّل
+    private var failed: [URL: Date] = [:]
 
     init() { cache.totalCostLimit = 120 << 20 }
 
     func image(_ candidates: [URL], maxPixel: CGFloat) async -> UIImage? {
-        for url in candidates where !failed.contains(url) {
+        for url in candidates {
+            if let at = failed[url] {
+                if Date().timeIntervalSince(at) < 300 { continue }
+                failed[url] = nil
+            }
             let key = "\(url.absoluteString)#\(Int(maxPixel))" as NSString
             if let hit = cache.object(forKey: key) { return hit }
-            guard let (data, resp) = try? await API.shared.session.data(for: API.shared.authorized(url)),
-                  (resp as? HTTPURLResponse)?.statusCode == 200,
+            // التمرير السريع يلغي الطلب: لا نعتبره فشلًا وإلا اختفت الصورة حتى إعادة فتح التطبيق
+            guard let (data, resp) = try? await API.shared.session.data(for: API.shared.authorized(url)) else {
+                if Task.isCancelled { return nil }
+                continue
+            }
+            guard (resp as? HTTPURLResponse)?.statusCode == 200,
                   let img = Self.downsample(data, maxPixel: maxPixel) else {
-                failed.insert(url)
+                failed[url] = Date()
                 continue
             }
             cache.setObject(img, forKey: key, cost: Int(img.size.width * img.size.height * img.scale * img.scale * 4))
@@ -58,6 +67,7 @@ struct RemoteImage: View {
         .clipped()
         .task(id: urls) {
             let img = await ImagePipeline.shared.image(urls, maxPixel: maxPixel)
+            if Task.isCancelled && img == nil { return }
             withAnimation(.easeOut(duration: 0.2)) { image = img; failed = img == nil }
         }
     }

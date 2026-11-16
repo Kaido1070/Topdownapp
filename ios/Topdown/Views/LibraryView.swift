@@ -113,7 +113,7 @@ struct LocalImage: View {
         .task(id: path) {
             guard let path else { return }
             let url = Storage.absolute(path)
-            image = await Task.detached { UIImage(contentsOfFile: url.path())?.preparingThumbnail(of: CGSize(width: 600, height: 600)) }.value
+            image = await Task.detached { UIImage(contentsOfFile: url.path(percentEncoded: false))?.preparingThumbnail(of: CGSize(width: 600, height: 600)) }.value
         }
     }
 }

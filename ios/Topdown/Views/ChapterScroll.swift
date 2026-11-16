@@ -331,9 +331,9 @@ enum ChapterPageLoader {
         case .remote(let urls):
             for url in urls {
                 if Task.isCancelled { return nil }
-                guard let (data, resp) = try? await API.shared.session.data(for: API.shared.authorized(url)),
-                      (resp as? HTTPURLResponse)?.statusCode == 200 else {
-                    WsrvPolicy.failed(url)
+                guard let (data, resp) = try? await API.shared.session.data(for: API.shared.authorized(url)) else { continue }
+                guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+                    WsrvPolicy.failed(url, status: (resp as? HTTPURLResponse)?.statusCode)
                     continue
                 }
                 if let r = await Task.detached(priority: .userInitiated, operation: { decode(data: data, maxPixel: maxPixel) }).value {

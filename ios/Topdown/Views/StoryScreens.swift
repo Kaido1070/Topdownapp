@@ -139,7 +139,7 @@ struct StoryScreen: View {
         .navigationTitle(story.title)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "رقم الفصل")
-        .keyboardType(.decimalPad)
+        .keyboardType(.numbersAndPunctuation)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -172,6 +172,7 @@ struct StoryScreen: View {
         error = nil
         do { detail = try await API.shared.story(item.url) }
         catch {
+            if error.isCancellation { return }
             // بدون إنترنت: نعرض الفصول المحمّلة
             if let offline = center.story(item.url) {
                 detail = nil

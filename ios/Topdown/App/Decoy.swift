@@ -13,7 +13,14 @@ final class Curtain {
 
     func update(concealed: Bool) {
         if concealed {
-            guard window == nil else { window?.alpha = 1; window?.makeKeyAndVisible(); return }
+            guard window == nil else {
+                // قد يكون الستار في منتصف حركة الاختفاء: نلغيها ونعيده فورًا
+                window?.layer.removeAllAnimations()
+                window?.alpha = 1
+                window?.isHidden = false
+                window?.makeKeyAndVisible()
+                return
+            }
             let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else {
                 // المشهد لم يجهز بعد: نعيد المحاولة بعد لحظة
@@ -38,6 +45,8 @@ final class Curtain {
         } else {
             guard let w = window else { return }
             UIView.animate(withDuration: 0.25, animations: { w.alpha = 0 }) { _ in
+                // أُعيد الإخفاء أثناء الحركة (مثل الخروج من التطبيق فورًا): الستار يبقى
+                guard !AppModel.shared.concealed else { w.alpha = 1; w.isHidden = false; return }
                 w.isHidden = true
                 if self.window === w { self.window = nil }
                 w.windowScene?.windows.first { $0 !== w }?.makeKey()
@@ -175,7 +184,9 @@ final class DecoyStore {
         busy = true
         progress = 0
         status = "جارٍ قراءة الرابط…"
-        defer { busy = false; status = nil }
+        // مهلة إضافية من النظام لإكمال التنزيل إذا خرج المستخدم من التطبيق
+        let bg = UIApplication.shared.beginBackgroundTask(withName: "decoy.download")
+        defer { busy = false; status = nil; UIApplication.shared.endBackgroundTask(bg) }
         let fm = FileManager.default
         var temps: [URL] = []
         defer { temps.forEach { try? fm.removeItem(at: $0) } }
@@ -434,7 +445,12 @@ struct DecoyPlayer: View {
             .buttonStyle(.glass)
             .padding()
         }
-        .onAppear { player.replaceCurrentItem(with: AVPlayerItem(url: url)); player.play() }
+        .onAppear {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try? AVAudioSession.sharedInstance().setActive(true)
+            player.replaceCurrentItem(with: AVPlayerItem(url: url))
+            player.play()
+        }
         .onDisappear { player.pause() }
     }
 }
@@ -539,7 +555,10 @@ struct SecretCodeSheet: View {
             Text(title).font(.headline).padding(.top, 24)
             if let hint { Text(hint).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center) }
             SecureField(step == .account ? "كلمة المرور" : "الكود", text: $text)
-                .textContentType(step == .create || step == .confirm ? .newPassword : .password)
+                // بدون اقتراحات «كلمة مرور قوية» أو حفظ في سلسلة المفاتيح للكود
+                .textContentType(step == .account ? .password : nil)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
                 .focused($focused)
                 .submitLabel(.go)
                 .onSubmit(submit)
@@ -670,8 +689,8 @@ struct ChangeActivationCodeSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("الكود الجديد", text: $code).textContentType(.newPassword)
-                    SecureField("أعد كتابته", text: $again).textContentType(.newPassword)
+                    SecureField("الكود الجديد", text: $code).textContentType(nil).autocorrectionDisabled()
+                    SecureField("أعد كتابته", text: $again).textContentType(nil).autocorrectionDisabled()
                 } footer: {
                     Text(error ?? "\(ActivationCode.minLength) خانات أو أكثر. لا يُحفظ الكود نفسه على الجهاز، فقط بصمة مشفّرة منه.")
                         .foregroundStyle(error == nil ? Color.secondary : Color.red)

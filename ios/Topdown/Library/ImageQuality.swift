@@ -114,7 +114,9 @@ enum ImageCompressor {
 
 /// بعض المواقع ترفضها خدمة الضغط؛ نتذكرها فلا نضيّع طلبًا عليها مرة ثانية.
 enum WsrvPolicy {
-    nonisolated(unsafe) private static var blocked: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "wsrv.blocked") ?? [])
+    // مفتاح جديد: القائمة القديمة امتلأت بمواقع سليمة بسبب طلبات أُلغيت أو انقطاع النت
+    private static let key = "wsrv.blocked.v2"
+    nonisolated(unsafe) private static var blocked: Set<String> = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
     private static let lock = NSLock()
 
     static func isBlocked(_ raw: String) -> Bool {
@@ -122,14 +124,14 @@ enum WsrvPolicy {
         return lock.withLock { blocked.contains(h) }
     }
 
-    /// يُستدعى عند فشل رابط wsrv: نستخرج موقع الصورة الأصلية ونضيفه للقائمة.
-    static func failed(_ wsrvURL: URL) {
-        guard wsrvURL.host() == "wsrv.nl",
+    /// يُستدعى عندما ترفض الخدمة الرابط صراحةً (4xx). أخطاء الشبكة والإلغاء لا تُحسب.
+    static func failed(_ wsrvURL: URL, status: Int?) {
+        guard let status, (400..<500).contains(status), status != 429, wsrvURL.host() == "wsrv.nl",
               let raw = URLComponents(url: wsrvURL, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "url" })?.value,
               let h = URL(string: raw)?.host() else { return }
         lock.withLock {
             blocked.insert(h)
-            UserDefaults.standard.set(Array(blocked), forKey: "wsrv.blocked")
+            UserDefaults.standard.set(Array(blocked), forKey: key)
         }
     }
 }

@@ -93,6 +93,7 @@ final class PlayerModel: NSObject {
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var itemObservations: [NSKeyValueObservation] = []
     @ObservationIgnored private var endObserver: NSObjectProtocol?
+    @ObservationIgnored private var concealObserver: NSObjectProtocol?
     @ObservationIgnored private var countdownTask: Task<Void, Never>?
     @ObservationIgnored private var retried = false
     @ObservationIgnored private var lastSaved: Double = 0
@@ -108,6 +109,13 @@ final class PlayerModel: NSObject {
         player.preventsDisplaySleepDuringVideoPlayback = true
         observe()
         setupRemoteCommands()
+        concealObserver = NotificationCenter.default.addObserver(forName: .stealthConcealed, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pause()
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            }
+        }
     }
 
     // MARK: - التحميل
@@ -128,6 +136,10 @@ final class PlayerModel: NSObject {
 
     /// يبدأ تشغيل عنصر (من التحميلات إن وُجد، وإلا يجلب الرابط من الخادم).
     func load(_ newItem: MediaItem? = nil, localPath: String? = nil) async {
+        if let newItem, newItem.key != item.key {
+            savePosition(force: true)   // نحفظ موضع الحلقة الحالية قبل الانتقال
+            lastSaved = 0
+        }
         if let newItem { item = newItem }
         countdownTask?.cancel(); nextCountdown = nil
         error = nil; ended = false; isBuffering = true; retried = false
@@ -269,7 +281,11 @@ final class PlayerModel: NSObject {
                 guard let self else { return }
                 self.isBuffering = status == .waitingToPlayAtSpecifiedRate
                 // أزرار المشغّل الأصلي تشغّل/توقف مباشرة؛ نتابع حالته
-                if status == .playing { self.isPlaying = true }
+                if status == .playing {
+                    self.isPlaying = true
+                    // إعادة المشاهدة بعد النهاية: نلغي الانتقال التلقائي للحلقة التالية
+                    if self.ended { self.ended = false; self.countdownTask?.cancel(); self.nextCountdown = nil }
+                }
                 if status == .paused { self.isPlaying = false }
             }
         })
@@ -292,7 +308,17 @@ final class PlayerModel: NSObject {
         })
         itemObservations.append(pi.observe(\.duration, options: [.new]) { [weak self] item, _ in
             let d = item.duration.seconds
-            Task { @MainActor in if d.isFinite, d > 0 { self?.duration = d; self?.updateNowPlaying() } }
+            Task { @MainActor in
+                guard let self, d.isFinite, d > 0 else { return }
+                self.duration = d
+                self.updateNowPlaying()
+                // موضع محفوظ عند نهاية الحلقة (حُفظ قبل معرفة المدة): نبدأ من الأول بدل أن تنتهي فورًا
+                if let r = self.resumedFrom, r > d - 25, self.current >= r - 2 {
+                    self.resumedFrom = nil
+                    self.seek(to: 0)
+                    if self.ended { self.play() }
+                }
+            }
         })
     }
 
@@ -350,7 +376,7 @@ final class PlayerModel: NSObject {
     }
 
     private func savePosition(force: Bool) {
-        guard current > 0, force || abs(current - lastSaved) >= 5 else { return }
+        guard current > 0, !ended, force || abs(current - lastSaved) >= 5 else { return }
         lastSaved = current
         PlaybackPositions.save(item.key, seconds: current, duration: duration)
         if isLocal { DownloadCenter.shared.savePosition(item.key, seconds: current) }
@@ -360,6 +386,9 @@ final class PlayerModel: NSObject {
 
     private func setupRemoteCommands() {
         let c = MPRemoteCommandCenter.shared()
+        // المشغّل الأحدث فقط يستلم الأوامر (لا تتراكم مستمعات المشغّلات السابقة)
+        for cmd in [c.playCommand, c.pauseCommand, c.togglePlayPauseCommand, c.skipForwardCommand,
+                    c.skipBackwardCommand, c.changePlaybackPositionCommand, c.nextTrackCommand] { cmd.removeTarget(nil) }
         c.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.play() }; return .success }
         c.pauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.pause() }; return .success }
         c.togglePlayPauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.toggle() }; return .success }
@@ -377,7 +406,8 @@ final class PlayerModel: NSObject {
 
     private func updateNowPlaying() {
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: item.title,
+            // عنوان محايد: شاشة القفل ومركز التحكم يراهما أي أحد
+            MPMediaItemPropertyTitle: "فيديو",
                         MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
         ]
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
@@ -403,6 +433,7 @@ final class PlayerModel: NSObject {
     deinit {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let concealObserver { NotificationCenter.default.removeObserver(concealObserver) }
     }
 }
 
